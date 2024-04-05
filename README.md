@@ -2,7 +2,7 @@
 
 Sedum (セダム) 麒麟草
 
-## Requirements
+## Dependencies
 
 - Postgres
 - Redis
