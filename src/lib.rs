@@ -1,5 +1,5 @@
 //! sedum
-//! A message dispatch service, based on an actual MQ implementation
+//! To be or not to be, it's your question.
 
 mod model;
 mod service;
