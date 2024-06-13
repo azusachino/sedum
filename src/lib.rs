@@ -1,7 +1,8 @@
 //! sedum
 //! To be or not to be, it's your question.
 
-mod model;
-mod service;
+pub mod model;
+pub(crate) mod service;
+pub mod utils;
 
-pub use anyhow::{bail, Result};
+pub use anyhow::{bail, Context, Result};
