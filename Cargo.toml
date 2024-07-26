@@ -21,14 +21,23 @@ redis = { version = "0.25", features = ["json", "tokio-comp"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-sqlx = { version = "0.7", features = [
+sqlx = { version = "0.8", features = [
     "chrono",
     "postgres",
     "runtime-tokio-rustls",
 ] }
 
+# raft
+openraft = "0.9"
+
+bytes = "1"
+
 http = "1"
 http-body = "1"
+http-body-util = "0.1"
+
+h2 = "0.4"
+
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = ["full"] }
 axum = { version = "0.7", features = ["default", "ws", "multipart"] }
@@ -38,6 +47,13 @@ tokio-util = "0.7"
 # for logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# grpc & protobuf
+prost = "0.13"
+tonic = "0.12"
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [profile.dev]
 opt-level = 1

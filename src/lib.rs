@@ -1,6 +1,7 @@
 //! sedum
 //! To be or not to be, it's your question.
 
+mod grpc;
 pub mod model;
 pub(crate) mod service;
 pub mod utils;
