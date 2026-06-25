@@ -77,16 +77,16 @@ v1 in spirit.
 ```mermaid
 flowchart TD
   V["GET /page/Foo"] --> X{"Foo in RocksDB cache?"}
-  X -- hit --> R["render cached body → HTML"] --> RO["readonly view"]
+  X -- hit --> R["render cached body -> HTML"] --> RO["readonly view"]
   X -- miss --> F{"Foo.md exists?"}
-  F -- yes --> RB["read file → back-fill cache → render"] --> RO
+  F -- yes --> RB["read file -> back-fill cache -> render"] --> RO
   F -- no --> NEW["offer: create Foo?"]
 
   RO -->|"click Edit"| E["GET /page/Foo/edit"]
-  E --> T["read body → textarea<br/>(embed content-hash, per ADR-3)"]
+  E --> T["read body -> textarea<br/>(embed content-hash, per ADR-3)"]
   T -->|"Save"| P["POST /page/Foo"]
   P --> S["atomic save + enqueue (see §3)"]
-  S --> RD["303 redirect → /page/Foo (view)"]
+  S --> RD["303 redirect to /page/Foo (view)"]
   RD --> V
 ```
 
@@ -109,11 +109,11 @@ sequenceDiagram
   participant PG as Postgres
 
   B->>H: POST /page/Foo (markdown body + prior hash)
-  Note over H: re-hash file; mismatch → 409 (ADR-3 optimistic concurrency)
-  H->>FS: write Foo.md.tmp + fsync → rename (atomic, truth)
+  Note over H: "re-hash file; mismatch -> 409 (ADR-3 optimistic concurrency)"
+  H->>FS: write Foo.md.tmp + fsync then rename (atomic, truth)
   H->>R: mirror body + hash; enqueue dirty key (WAL fsync)
   H->>I: signal "work available" (in-process)
-  H-->>B: 303 redirect → /page/Foo (view)
+  H-->>B: 303 redirect to /page/Foo (view)
   Note over H,PG: handler enqueues; it does NOT touch the index
 
   I->>R: pop next dirty key
@@ -161,7 +161,7 @@ flowchart TD
   D -- no --> E
   D -- yes --> U["update RocksDB cache + hash<br/>enqueue dirty key"]
   A --> M["page key with no file on disk"]
-  M --> X["enqueue delete<br/>(Postgres cascade; inbound links → dangling)"]
+  M --> X["enqueue delete<br/>(Postgres cascade; inbound links -> dangling)"]
   U --> H["indexer drains queue (§3)"]
   X --> H
 ```

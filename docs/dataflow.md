@@ -39,14 +39,14 @@ wiki model, no client JS.
 ```mermaid
 flowchart TD
   V["GET /page/Foo"] --> X{"Foo.md exists?"}
-  X -- yes --> R["read Foo.md → render md→HTML"] --> RO["readonly view"]
+  X -- yes --> R["read Foo.md -> render md->HTML"] --> RO["readonly view"]
   X -- no --> NEW["offer: create Foo?"]
 
   RO -->|"click Edit"| E["GET /page/Foo/edit"]
-  E --> T["read Foo.md → textarea"]
+  E --> T["read Foo.md -> textarea"]
   T -->|"Save"| P["POST /page/Foo"]
   P --> S["atomic save"]
-  S --> RD["303 redirect → /page/Foo (view)"]
+  S --> RD["303 redirect to /page/Foo (view)"]
   RD --> V
 ```
 
@@ -67,14 +67,14 @@ sequenceDiagram
 
   B->>H: POST /page/Foo (markdown body)
   H->>FS: write Foo.md.tmp + fsync
-  H->>FS: rename → Foo.md (atomic)
-  H-->>B: 303 redirect → /page/Foo (view)
+  H->>FS: rename to Foo.md (atomic)
+  H-->>B: 303 redirect to /page/Foo (view)
   Note over H,PG: handler does NOT touch the index
   FS-->>W: modify event (Foo.md)
   W->>W: debounce ~200ms
   W->>I: reindex(Foo.md)
   I->>PG: reindex transaction
-  Note over W,I: notify is the SOLE trigger → no race
+  Note over W,I: notify is the SOLE trigger -> no race
 ```
 
 ## 4. Reindex-one-page transaction
@@ -85,10 +85,10 @@ One page reindex is a single Postgres transaction.
 flowchart TD
   S["reindex(path)"] --> P["parse page:<br/>title, [[links]], #tags, body"]
   P --> BEGIN["BEGIN"]
-  BEGIN --> U["upsert pages row → id<br/>set body_tsv, mtime"]
+  BEGIN --> U["upsert pages row -> id<br/>set body_tsv, mtime"]
   U --> DL["delete links where src_id=id<br/>insert fresh edges"]
   DL --> DT["delete tags where page_id=id<br/>insert fresh tags"]
-  DT --> RES["resolve targets → target_id<br/>(unique basename, shortest path)"]
+  DT --> RES["resolve targets -> target_id<br/>(unique basename, shortest path)"]
   RES --> DAN["re-resolve dangling links<br/>now pointing at this page"]
   DAN --> COMMIT["COMMIT"]
 ```
@@ -104,7 +104,7 @@ flowchart TD
   B --> C{"file mtime > pages.mtime?"}
   C -- "new / changed" --> D["reindex(file)"]
   C -- unchanged --> E["skip"]
-  A --> F["pages row with no file on disk<br/>→ delete (cascade)"]
+  A --> F["pages row with no file on disk<br/>-> delete (cascade)"]
   D --> G["live watcher takes over"]
   E --> G
   F --> G
@@ -118,8 +118,8 @@ moment the target is created; they go dangling again if it is deleted.
 ```mermaid
 stateDiagram-v2
   [*] --> Dangling: "[[Bar]] written, Bar.md absent"
-  Dangling --> Resolved: "Bar.md created → indexer sets target_id"
-  Resolved --> Dangling: "Bar.md deleted → ON DELETE SET NULL"
+  Dangling --> Resolved: "Bar.md created -> indexer sets target_id"
+  Resolved --> Dangling: "Bar.md deleted -> ON DELETE SET NULL"
   Resolved --> [*]: "source link removed"
   Dangling --> [*]: "source link removed"
 ```

@@ -83,9 +83,9 @@ sequenceDiagram
   participant PG as Postgres
 
   B->>H: POST /page/Foo (markdown body + prior hash)
-  Note over H: re-hash file; mismatch → 409 (ADR-3 optimistic concurrency)
-  H->>FS: write Foo.md.tmp + fsync → rename (atomic)
-  H-->>B: 303 redirect → /page/Foo (view)
+  Note over H: "re-hash file; mismatch -> 409 (ADR-3 optimistic concurrency)"
+  H->>FS: write Foo.md.tmp + fsync then rename (atomic)
+  H-->>B: 303 redirect to /page/Foo (view)
   Note over H,PG: handler does NOT touch the index
   FS-->>W: modify event (Foo.md, via its folder watch)
   W->>W: debounce ~200ms
@@ -145,7 +145,7 @@ flowchart TD
   C -- yes --> D{"content-hash ≠ pages.hash?"}
   D -- no --> E
   D -- yes --> R["reindex(file)"]
-  A --> F["pages row with no file on disk<br/>→ delete (cascade)"]
+  A --> F["pages row with no file on disk<br/>-> delete (cascade)"]
   R --> G["live watcher takes over"]
   E --> G
   F --> G
