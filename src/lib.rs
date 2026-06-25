@@ -1,7 +1,6 @@
-//! sedum
-//! A message dispatch service, based on an actual MQ implementation
+//! sedum — a filesystem-owned personal Markdown wiki.
+//!
+//! Markdown files under `sedum/` are the source of truth; the Postgres index
+//! is a disposable cache rebuildable from `sedum/**/*.md`.
 
-mod model;
-mod service;
-
-pub use anyhow::{bail, Result};
+pub use anyhow::{bail, Context, Result};

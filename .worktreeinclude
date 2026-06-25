@@ -1,0 +1,4 @@
+# Local environment — copied into every new worktree
+.env
+.env.local
+dev.env
