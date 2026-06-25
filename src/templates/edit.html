@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}
+Sedum - Edit {{ path }}
+{% endblock %}
+
+{% block content %}
+<article>
+    <h1>Edit: {{ path }}</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem;">
+        File path: <code>sedum/{{ path }}.md</code>
+    </p>
+
+    <form action="/p/{{ path }}" method="POST" style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <input type="hidden" name="loaded_hash" value="{{ loaded_hash }}">
+        
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label for="body-textarea" style="font-weight: 600; font-size: 0.9rem; color: var(--text-muted);">
+                Content (Markdown + optional Frontmatter)
+            </label>
+            <textarea 
+                id="body-textarea" 
+                name="body" 
+                rows="20" 
+                style="width: 100%; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.95rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; background-color: var(--bg-panel); color: var(--text); resize: vertical; outline: none; transition: border-color 0.2s;"
+                placeholder="---&#10;title: Page Title&#10;---&#10;&#10;# Hello World"
+            >{{ body }}</textarea>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+            <button 
+                type="submit" 
+                style="padding: 0.75rem 1.5rem; background-color: var(--primary); color: white; border-radius: 8px; font-weight: 600; border: none; cursor: pointer; transition: background-color 0.2s;"
+                onmouseover="this.style.backgroundColor='var(--primary-hover)'"
+                onmouseout="this.style.backgroundColor='var(--primary)'"
+            >
+                Save Page
+            </button>
+            <a 
+                href="/p/{{ path }}" 
+                style="display: flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: 1px solid var(--border); background-color: var(--bg-panel); color: var(--text); border-radius: 8px; font-weight: 600; text-decoration: none; transition: background-color 0.2s;"
+                onmouseover="this.style.backgroundColor='var(--code-bg)'"
+                onmouseout="this.style.backgroundColor='var(--bg-panel)'"
+            >
+                Cancel
+            </a>
+        </div>
+    </form>
+</article>
+{% endblock %}

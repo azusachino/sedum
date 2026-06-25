@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}
+Sedum - Conflict on {{ path }}
+{% endblock %}
+
+{% block content %}
+<article>
+    <div style="background-color: rgba(239, 68, 68, 0.1); border: 1px solid rgb(239, 68, 68); border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem;">
+        <h2 style="color: rgb(239, 68, 68); margin-top: 0; display: flex; align-items: center; gap: 0.5rem; border-bottom: none; padding-bottom: 0;">
+            ⚠️ Save Conflict Detected
+        </h2>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.95rem;">
+            This file was modified by another process or in another browser tab after you loaded it. Saving now would overwrite those changes.
+        </p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+        <div>
+            <h3 style="font-size: 1.1rem; color: var(--text-muted); margin-bottom: 0.5rem;">Current Content on Disk</h3>
+            <pre style="height: 350px; font-size: 0.85rem; border-color: var(--border); overflow: auto; white-space: pre-wrap; word-break: break-all;"><code>{{ current_content }}</code></pre>
+        </div>
+        <div>
+            <h3 style="font-size: 1.1rem; color: var(--text-muted); margin-bottom: 0.5rem;">Your Submitted Content</h3>
+            <pre style="height: 350px; font-size: 0.85rem; border-color: var(--border); overflow: auto; white-space: pre-wrap; word-break: break-all;"><code>{{ submitted_content }}</code></pre>
+        </div>
+    </div>
+
+    <div style="display: flex; gap: 1rem; align-items: center;">
+        <!-- Overwrite form -->
+        <form action="/p/{{ path }}" method="POST">
+            <input type="hidden" name="loaded_hash" value="{{ current_hash }}">
+            <input type="hidden" name="body" value="{{ submitted_content }}">
+            <button 
+                type="submit" 
+                style="padding: 0.75rem 1.5rem; background-color: rgb(239, 68, 68); color: white; border-radius: 8px; font-weight: 600; border: none; cursor: pointer; transition: background-color 0.2s;"
+                onmouseover="this.style.backgroundColor='rgb(220, 38, 38)'"
+                onmouseout="this.style.backgroundColor='rgb(239, 68, 68)'"
+            >
+                Overwrite Disk Content
+            </button>
+        </form>
+
+        <!-- Go back button -->
+        <a 
+            href="/p/{{ path }}/edit" 
+            style="display: flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: 1px solid var(--border); background-color: var(--bg-panel); color: var(--text); border-radius: 8px; font-weight: 600; text-decoration: none; transition: background-color 0.2s;"
+            onmouseover="this.style.backgroundColor='var(--code-bg)'"
+            onmouseout="this.style.backgroundColor='var(--bg-panel)'"
+        >
+            Go Back & Resolve Manually
+        </a>
+    </div>
+</article>
+{% endblock %}

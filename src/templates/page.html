@@ -6,26 +6,32 @@ Sedum - {{ path }}
 
 {% block content %}
 <article>
-    <h1>{{ title }}</h1>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h1 style="margin: 0;">{{ title }}</h1>
+        {% if exists %}
+        <a href="/p/{{ path }}/edit" class="btn btn-primary" style="padding: 0.5rem 1rem; background-color: var(--primary); color: white; border-radius: 6px; border: none; font-weight: 500; text-decoration: none;">
+            Edit Page
+        </a>
+        {% endif %}
+    </div>
+    
     <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem;">
         File path: <code>sedum/{{ path }}.md</code>
     </p>
 
     <div class="content-body">
-        <p>This is a mockup page view. In the future, this page will render the markdown content loaded from the filesystem and indexed by Postgres.</p>
-        
-        <h2>Syntax Highlighting Sandbox</h2>
-        <p>Prism syntax highlighting is automatically applied to code blocks below on page load and dynamically on Alpine initialization:</p>
-        
-        <pre><code class="language-rust">fn main() {
-    // Welcome to Sedum!
-    let mut message = String::from("Hello, ");
-    message.push_str("world!");
-    println!("{}", message);
-}</code></pre>
-
-        <h2>Database and Connection Status</h2>
-        <p>If you see this page, the Axum server has successfully established a Connection Pool to your Postgres instance, executed startup migrations, and initialized Minijinja templates dynamically.</p>
+        {% if exists %}
+            {{ content_html | safe }}
+        {% else %}
+            <div style="text-align: center; padding: 3rem 1rem; border: 2px dashed var(--border); border-radius: 12px; margin-top: 2rem;">
+                <p style="font-size: 1.2rem; color: var(--text-muted); margin-bottom: 1.5rem;">
+                    This page doesn't exist yet.
+                </p>
+                <a href="/p/{{ path }}/edit" style="display: inline-block; padding: 0.75rem 1.5rem; background-color: var(--primary); color: white; border-radius: 8px; font-weight: 600; text-decoration: none; border: none; transition: background-color 0.2s;">
+                    Create Page
+                </a>
+            </div>
+        {% endif %}
     </div>
 </article>
 {% endblock %}
