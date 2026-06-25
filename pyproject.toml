@@ -1,0 +1,11 @@
+[project]
+name = "sedum-scripts"
+version = "0.0.1"
+description = "Project automation and dev scripts for sedum (run via `uv run`)."
+requires-python = ">=3.12"
+dependencies = []
+
+# Dev/automation scripting lives here and runs via `uv run python scripts/<x>.py`
+# instead of bash glue. The Rust crate is the product; this is tooling only.
+[tool.uv]
+package = false

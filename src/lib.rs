@@ -1,9 +1,6 @@
-//! sedum
-//! To be or not to be, it's your question.
-
-mod grpc;
-pub mod model;
-pub(crate) mod service;
-pub mod utils;
+//! sedum — a filesystem-owned personal Markdown wiki.
+//!
+//! Markdown files under `sedum/` are the source of truth; the Postgres index
+//! is a disposable cache rebuildable from `sedum/**/*.md`.
 
 pub use anyhow::{bail, Context, Result};

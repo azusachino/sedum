@@ -9,62 +9,49 @@ repository = "https://github.com/azusachino/sedum"
 
 [dependencies]
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
-async-trait = "0.1"
-futures = "0.3"
-chrono = "0.4"
+# async runtime
+tokio = { version = "1", features = ["full"] }
 
-# possible features: json, cluster, tokio-rustls-comp
-redis = { version = "0.25", features = ["json", "tokio-comp"] }
+# web
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
 
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
+# postgres index cache (disposable; source of truth is sedum/**/*.md)
 sqlx = { version = "0.8", features = [
-    "chrono",
-    "postgres",
-    "runtime-tokio-rustls",
+  "postgres",
+  "runtime-tokio-rustls",
+  "chrono",
+  "macros",
+  "migrate",
 ] }
 
-# raft
-openraft = "0.9"
+# markdown rendering
+pulldown-cmark = "0.12"
 
-bytes = "1"
+# filesystem watcher (background indexer)
+notify = "7"
 
-http = "1"
-http-body = "1"
-http-body-util = "0.1"
+# serialization + time
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
 
-h2 = "0.4"
-
-tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = ["full"] }
-axum = { version = "0.7", features = ["default", "ws", "multipart"] }
-axum-ctx = "0.4"
-tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7"
-# for logging
+# logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# grpc & protobuf
-prost = "0.13"
-tonic = "0.12"
-
-[build-dependencies]
-tonic-build = "0.12"
-
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
 
 [profile.release]
 strip = true
 lto = true
-opt-level = "z"
 codegen-units = 1
 
 [registries.crates-io]
