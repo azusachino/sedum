@@ -4,3 +4,5 @@
 //! is a disposable cache rebuildable from `sedum/**/*.md`.
 
 pub use anyhow::{bail, Context, Result};
+
+pub mod indexer;

@@ -85,15 +85,19 @@ async fn main() -> Result<()> {
     let mut templates_env = Environment::new();
     templates_env.set_loader(minijinja::path_loader("src/templates"));
     let state = AppState {
-        db: pool,
+        db: pool.clone(),
         templates: Arc::new(templates_env),
     };
 
-    // 6. Build Router & Configure axum routes
+    // 6. Initialize background indexer
+    let _indexer = sedum::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("sedum"))
+        .context("Failed to initialize background indexer")?;
+
+    // 7. Build Router & Configure axum routes
     let app = app(state);
 
-    // 7. Bind and run local listener
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    // 8. Bind and run local listener to 0.0.0.0
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
