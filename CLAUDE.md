@@ -11,7 +11,7 @@ backlinks, tags, and full-text search.
 - **Language:** Rust (edition 2021)
 - **Web:** axum + tokio + tower-http (serves `static/` + page/API routes)
 - **Index cache:** Postgres via sqlx (disposable; rebuildable from files)
-- **Markdown:** pulldown-cmark
+- **Markdown:** comrak (native wikilinks + GitHub `[!NOTE]` alerts + GFM)
 - **Filesystem watch:** notify (background indexer)
 - **Frontend (v0):** server-rendered HTML + plain `<textarea>` (no JS bundler)
 

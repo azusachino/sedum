@@ -28,8 +28,8 @@ sqlx = { version = "0.8", features = [
   "migrate",
 ] }
 
-# markdown rendering
-pulldown-cmark = "0.12"
+# markdown rendering (comrak: native wikilinks + GitHub alerts + GFM)
+comrak = "0.52"
 
 # filesystem watcher (background indexer)
 notify = "7"
