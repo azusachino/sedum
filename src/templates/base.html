@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sedum{% endblock %}</title>
+    
+    <!-- Inline Pre-Paint Script to prevent FOUC -->
+    <script>
+        (function() {
+            const palette = localStorage.getItem('sedum-palette') || 'default';
+            const mode = localStorage.getItem('sedum-mode') || 'system';
+            document.documentElement.setAttribute('data-palette', palette);
+            
+            let resolvedMode = mode;
+            if (mode === 'system') {
+                resolvedMode = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-mode', resolvedMode);
+        })();
+    </script>
+
+    <!-- Project Stylesheet -->
+    <link rel="stylesheet" href="/static/css/index.css">
+    
+    <!-- Prism Syntax Highlighting (Stylesheets) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" id="prism-theme">
+    
+    <!-- Alpine.js (Core & Defer) -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Optional Mermaid.js (Lazy-Loaded) -->
+    {% if has_mermaid %}
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            mermaid.initialize({ 
+                startOnLoad: true,
+                theme: document.documentElement.getAttribute('data-mode') === 'dark' ? 'dark' : 'default'
+            });
+        });
+    </script>
+    {% endif %}
+
+    {% block head %}{% endblock %}
+</head>
+<body x-data="themeSwitcher" x-init="init()">
+
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div>
+                <div class="brand">
+                    <div class="brand-icon"></div>
+                    <span>Sedum</span>
+                </div>
+                
+                <nav class="nav-links">
+                    <a href="/p/Index" class="nav-item {% if path == 'Index' %}active{% endif %}">
+                        <span>📖 Index</span>
+                    </a>
+                    <a href="/p/Sandbox" class="nav-item {% if path == 'Sandbox' %}active{% endif %}">
+                        <span>🧪 Sandbox</span>
+                    </a>
+                    <a href="/p/Settings" class="nav-item {% if path == 'Settings' %}active{% endif %}">
+                        <span>⚙️ Settings</span>
+                    </a>
+                </nav>
+            </div>
+            
+            <!-- Theme Switcher Widget -->
+            <div class="theme-switcher-container">
+                <span class="switcher-label">Display Theme</span>
+                <div class="switcher-grid">
+                    <div>
+                        <span style="font-size: 0.7rem; color: var(--text-muted);">Palette</span>
+                        <select x-model="palette" class="switcher-select">
+                            <option value="default">Default</option>
+                            <option value="catppuccin">Catppuccin</option>
+                        </select>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.7rem; color: var(--text-muted);">Mode</span>
+                        <select x-model="mode" class="switcher-select">
+                            <option value="system">System</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="footer-text">
+                    <span>Sedum Wiki v0.1.0</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <div class="content-card" x-data x-init="if (window.Prism) Prism.highlightAll()">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <!-- Alpine theme switcher controller -->
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('themeSwitcher', () => ({
+                palette: localStorage.getItem('sedum-palette') || 'default',
+                mode: localStorage.getItem('sedum-mode') || 'system',
+                
+                init() {
+                    this.$watch('palette', val => {
+                        localStorage.setItem('sedum-palette', val);
+                        document.documentElement.setAttribute('data-palette', val);
+                        this.updatePrismTheme();
+                    });
+                    
+                    this.$watch('mode', val => {
+                        localStorage.setItem('sedum-mode', val);
+                        this.resolveAndApplyMode();
+                    });
+
+                    // Live media query listener for OS mode flips
+                    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                    mediaQuery.addEventListener('change', () => {
+                        if (this.mode === 'system') {
+                            this.resolveAndApplyMode();
+                        }
+                    });
+                    
+                    this.resolveAndApplyMode();
+                },
+                
+                resolveAndApplyMode() {
+                    let resolved = this.mode;
+                    if (this.mode === 'system') {
+                        resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                    }
+                    document.documentElement.setAttribute('data-mode', resolved);
+                    this.updatePrismTheme();
+                },
+
+                updatePrismTheme() {
+                    const resolvedMode = document.documentElement.getAttribute('data-mode');
+                    const themeLink = document.getElementById('prism-theme');
+                    if (!themeLink) return;
+                    
+                    if (resolvedMode === 'dark') {
+                        themeLink.setAttribute('href', 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css');
+                    } else {
+                        themeLink.setAttribute('href', 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css');
+                    }
+                }
+            }));
+        });
+    </script>
+
+    <!-- Prism JS for Syntax Highlighting -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+</body>
+</html>

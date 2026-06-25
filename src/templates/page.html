@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}
+Sedum - {{ path }}
+{% endblock %}
+
+{% block content %}
+<article>
+    <h1>{{ title }}</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem;">
+        File path: <code>sedum/{{ path }}.md</code>
+    </p>
+
+    <div class="content-body">
+        <p>This is a mockup page view. In the future, this page will render the markdown content loaded from the filesystem and indexed by Postgres.</p>
+        
+        <h2>Syntax Highlighting Sandbox</h2>
+        <p>Prism syntax highlighting is automatically applied to code blocks below on page load and dynamically on Alpine initialization:</p>
+        
+        <pre><code class="language-rust">fn main() {
+    // Welcome to Sedum!
+    let mut message = String::from("Hello, ");
+    message.push_str("world!");
+    println!("{}", message);
+}</code></pre>
+
+        <h2>Database and Connection Status</h2>
+        <p>If you see this page, the Axum server has successfully established a Connection Pool to your Postgres instance, executed startup migrations, and initialized Minijinja templates dynamically.</p>
+    </div>
+</article>
+{% endblock %}
