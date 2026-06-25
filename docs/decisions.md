@@ -3,6 +3,10 @@
 Resolutions to the open design corners. Each is a decision, not code. Mirrored
 in asobi (`sedum:decision:*`). See `architecture.md` for the prose design.
 
+> **Status:** ADR-1 … ADR-5 below are **verified** and now canonical in
+> `docs/adr/` (`0001`–`0005`). This file is the **draft/staging** pool for
+> proposed decisions; the verified copies in `docs/adr/` win on any conflict.
+
 ---
 
 ## ADR-1 — Full-text search (English)
@@ -124,3 +128,135 @@ files-are-truth (an asset may be referenced from outside Sedum, or kept
 deliberately). Instead, a **report**: assets on disk minus
 `tb_links(kind = 'asset' AND is_embed)` = unreferenced. Manual cleanup only. No
 new table — asset targets already live in `tb_links`.
+
+---
+
+## ADR-5 — Navigation explorer (folder/file tree)
+
+**Decision.** A Quartz-style collapsible **explorer** in the sidebar, rendered
+**server-side** from `tb_pages.path` using native `<details>`/`<summary>` —
+**zero client JS, no schema change**. Folders are derived **path-prefixes**, not
+rows; the tree is a pure function of the existing index, so the read path stays
+**Postgres-only** (consistent with the single-writer, read-only-handler model).
+
+**Why no JS.** This fits the decided frontend stance (`product.md` → *Rendering:
+"no JS bundler / server-first" ≠ "zero JS"*): Mermaid is the **one** deliberate
+client-JS exception; everything else stays server-rendered. `<details>` gives
+collapse/expand for free, works with JS disabled, and needs no bundler.
+
+**Why physical folders, not tags.** A tag-hierarchy tree (`#area/sub`) is more
+"on-brand" per `architecture.md` ("the graph carries the meaning"), but the
+explorer's job is **spatial orientation** — "where does this file live" — which
+folders answer directly. Folders remain the "loose filing cabinet"
+(`architecture.md`); the explorer just makes that cabinet navigable. A
+tag-tree is a *different* view and can ship later at `/tags` reusing the same
+`<details>` renderer over `tb_tags`.
+
+**Scale.** Full server-render for typical vaults (hundreds–low thousands). Past
+a threshold, render top levels collapsed and **lazy-load** a folder's children
+on expand from a small `/tree?prefix=…` endpoint — never emit 100k nodes
+eagerly (same "never load the full set at once" rule as backlinks). The active
+page's ancestor folders get `open`; siblings stay collapsed.
+
+**Ordering.** Folders-before-files, alphabetical (free from a `BTreeMap` walk,
+`title.is_none()` first). Frontmatter `order`/`nav` hints are **deferred** — not
+needed for v0.
+
+**Rejected.** (1) A client-side JS tree widget — reintroduces the bundler/Electron
+tax ADR-2 and `product.md` exist to avoid. (2) A `tb_folders` table — folders
+are derivable from `path`; materializing them duplicates truth and invites
+drift. Mirrored in asobi `sedum:decision:nav-explorer`.
+
+---
+
+## ADR-6 — Filesystem watcher at scale
+
+> **Status: Verified** → canonical in `docs/adr/0006-watcher-at-scale.md`. Lifts
+> the `dataflow_v3.md` resolution into a decision so the RocksDB detour is not
+> re-litigated.
+
+**Decision.** Keep v1's `notify` watcher as the sole index trigger; scale it by
+watching **directories, not files**. Watch budget = directory count, not file
+count. Three levers in order: (1) recursive `notify` (one watch per directory,
+default); (2) document raising `fs.inotify.max_user_watches` in setup; (3) a
+`PollWatcher` fallback (zero inotify watches, periodic mtime scan) past an
+extreme directory-count threshold. The startup mtime+hash reconcile sweeps any
+events missed across the new-subdir registration race or process downtime.
+
+**Why.** The 100k-file watch limit was **misdiagnosed**: inotify watches are
+**per-directory**, and `notify`'s recursive mode adds one watch per subdirectory,
+so a wiki with shallow foldering never approaches the limit (100k files in ~200
+folders ≈ 200 watches; default cap 65k–524k; macOS FSEvents has no per-file
+limit). The watcher's only irreplaceable job is **live pickup of external
+edits** — exactly the files-are-truth payoff.
+
+**Rejected.** RocksDB as a durable work-queue / primary store (former
+`dataflow_v2.md`) — solves a problem sedum doesn't have, adds a second store,
+and risks the core invariant. See `docs/dataflow_v3.md` (supersedes v2).
+Candidate verified file: `docs/adr/0006-watcher-at-scale.md`.
+
+---
+
+## ADR-7 — Frontend rendering & client-JS budget
+
+> **Status: Verified** → canonical in `docs/adr/0007-frontend-rendering.md`.
+> **Supersedes** `product.md`'s server-side `syntect` highlighting choice
+> (latest decision wins). Source plan: `docs/frontend_design.md` (agy),
+> reconciled.
+
+**Decision (summary).** Server-rendered, **no JS bundler**, with a client-JS
+budget of vendored, locally-served libraries:
+
+- **Alpine.js** — interactive widgets only (`Ctrl-K` palette, `[[ ]]`
+  autocomplete, modals); calls the JSON API. Not a general SPA layer.
+- **Mermaid.js** — lazy, injected only when `tb_pages.has_mermaid`; theme from
+  config, not hardcoded.
+- **Code highlighting → client-side Prism.js for the MVP** — a conscious
+  reversal of the server-side `syntect` plan, accepted for MVP speed. Cost: FOUC
+  + no highlighting for JS-disabled / published readers. **syntect deferred** as
+  a post-MVP swap (highlight-at-save + cache).
+- Native server features (Themes/Homepage/Callouts), first-class frontmatter —
+  unchanged.
+
+See the ADR for full rationale and the deferred-syntect note.
+
+---
+
+## ADR-8 — Theme switching
+
+> **Status: Verified** → canonical in `docs/adr/0008-theme-switching.md`.
+> **Extends ADR-7** (Themes + Alpine budget); ADR-7 is immutable, so the
+> switcher is a new decision.
+
+**Decision.** A theme switcher on **two orthogonal axes**, both persisted to
+`localStorage` (per-browser display prefs, not content):
+
+- **Palette:** `default` | `catppuccin` → `data-palette` on `<html>`.
+- **Mode:** `system` | `light` | `dark` → resolved to a `data-mode` of
+  `light`/`dark` on `<html>`. `system` reads `prefers-color-scheme` and a
+  `matchMedia` listener live-updates on OS flip.
+
+CSS is **custom-variable sets** selected by the attribute pair — four base
+combinations: `default+light`, `default+dark`, `catppuccin+light` (Latte),
+`catppuccin+dark` (Mocha). `[data-palette="catppuccin"][data-mode="dark"]`
+overrides the `--vars`; everything (callouts, links, code) reads the variables.
+
+**Mechanics.** (1) A tiny **inline pre-paint script** in `<head>` sets
+`data-palette`/`data-mode` from `localStorage` before first paint — avoids the
+theme flash (FOUC). (2) **Alpine** drives the dropdown + persistence + the
+`matchMedia` listener. (3) The server `theme` config key (ADR-7) supplies the
+**default** when no saved pref. (4) **Prism** code themes are swapped to match
+the resolved palette+mode (Catppuccin ships official Prism themes).
+
+**Why.** Palette and mode are genuinely independent, and the Catppuccin family
+maps exactly onto the mode axis (Latte = light, Mocha = dark), so it inherits
+System/Light/Dark for free — "Catppuccin + System" = Latte by day, Mocha by
+night with zero extra UI. Fits the decided no-bundler + Alpine stance.
+
+**Trade-offs / Rejected.** Four CSS variable sets to maintain (and matching
+Prism themes). One new inline pre-paint `<script>` — justified by FOUC, kept
+minimal. `localStorage` is per-browser and **not synced** — acceptable for a
+display preference. Rejected: a flat single-list of themes (loses the
+palette×mode independence the user chose); server-side per-user theme storage
+(no user system — ADR-3). Candidate verified file:
+`docs/adr/0008-theme-switching.md`.

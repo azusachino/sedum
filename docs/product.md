@@ -131,6 +131,12 @@ opaque `key → value` properties (`frontmatter JSONB` on `pages`) — searchabl
 and the groundwork for a future Dataview-lite query, with no hardcoded schema.
 
 ### Rendering: "no JS bundler / server-first" ≠ "zero JS"
+
+> **Superseded for the MVP by ADR-7** (`docs/adr/0007-frontend-rendering.md`):
+> highlighting uses **client-side Prism.js** for the MVP; **`syntect` is
+> deferred** as a post-MVP swap. The server-side stance below is the *target*,
+> not the MVP. Latest decision wins.
+
 - **Code highlighting → server-side `syntect`.** Highlight at render time into
   classed spans, colored by CSS; themeable via the Themes mechanism. No client
   JS, works with JS disabled.
