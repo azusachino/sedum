@@ -83,7 +83,7 @@ sequenceDiagram
   participant PG as Postgres
 
   B->>H: POST /page/Foo (markdown body + prior hash)
-  Note over H: "re-hash file; mismatch -> 409 (ADR-3 optimistic concurrency)"
+  Note over H: re-hash file, mismatch results in 409 (ADR-3 optimistic concurrency)
   H->>FS: write Foo.md.tmp + fsync then rename (atomic)
   H-->>B: 303 redirect to /page/Foo (view)
   Note over H,PG: handler does NOT touch the index
@@ -108,7 +108,7 @@ flowchart TD
   C --> E["live external-edit pickup"]
   D --> E
 
-  C -. "new subdir created" .-> F["crate auto-adds a watch;<br/>files raced before it land<br/>are caught by startup reconcile"]
+  C -. "new subdir created" .-> F["crate auto-adds a watch,<br/>files raced before it land<br/>are caught by startup reconcile"]
 ```
 
 Three levers, in order of preference:

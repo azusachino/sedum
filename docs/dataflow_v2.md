@@ -109,12 +109,12 @@ sequenceDiagram
   participant PG as Postgres
 
   B->>H: POST /page/Foo (markdown body + prior hash)
-  Note over H: "re-hash file; mismatch -> 409 (ADR-3 optimistic concurrency)"
+  Note over H: re-hash file, mismatch results in 409 (ADR-3 optimistic concurrency)
   H->>FS: write Foo.md.tmp + fsync then rename (atomic, truth)
-  H->>R: mirror body + hash; enqueue dirty key (WAL fsync)
+  H->>R: mirror body + hash and enqueue dirty key (WAL fsync)
   H->>I: signal "work available" (in-process)
   H-->>B: 303 redirect to /page/Foo (view)
-  Note over H,PG: handler enqueues; it does NOT touch the index
+  Note over H,PG: handler enqueues and does NOT touch the index
 
   I->>R: pop next dirty key
   R-->>I: Foo (body + hash)
