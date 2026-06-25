@@ -1,136 +1,173 @@
-# Dataflow & Workflows (v2)
+# Dataflow & Workflows (v2 — RocksDB queue for 100k-file scale)
 
-This document describes the updated dataflow and execution flows for the **RocksDB + Postgres + Filesystem Sync** architecture.
+This revises the v1 dataflow (`docs/dataflow.md`) to remove sedum's dependency
+on a recursive `notify`/inotify watch, which does not survive the 100k-file
+scale target (`architecture.md` → *Vault layout & scale*). It introduces a
+**RocksDB durable work-queue + read cache** while keeping the core invariant
+intact.
+
+## Why this changes (the notify limit)
+
+v1 uses the `notify` watcher as the **sole** index trigger — even for the app's
+own saves: a `POST` writes the file, and the resulting `rename` event is what
+tells the indexer to reindex. At 10k–100k files a recursive inotify watch
+exceeds `fs.inotify.max_user_watches`, so the *trigger mechanism itself* is what
+breaks at scale, not Postgres.
+
+The fix is to stop **watching** for app-originated changes and instead have the
+save handler **enqueue** its own index work directly. RocksDB backs that queue
+durably, so:
+
+- App saves never depend on a filesystem watch → the inotify budget is a
+  non-issue for normal editing.
+- The queue survives a crash, so startup **drains the queue** instead of
+  re-walking 100k files (a full mtime rescan at that scale is exactly the cost
+  we want to avoid).
+- External edits (git pull, another editor) are caught by a **periodic
+  reconcile** scan rather than a live per-file watch.
+
+**Core invariant preserved.** Markdown files under `sedum/` remain the source of
+truth — saves still atomic-write the file (temp + `fsync` + `rename`) *before*
+enqueuing. **RocksDB and Postgres are both disposable caches**, fully
+rebuildable from `sedum/**/*.md`; deleting either loses nothing but rebuild
+time. RocksDB holds two column families: a durable `queue` CF (pending index
+work) and an optional `body` read-cache CF (`slug → body + content-hash + mtime`)
+that speeds reads and cheap change-detection.
 
 ---
 
-## 1. System Overview (v2)
-
-The web server reads and writes primary content from the local **RocksDB** store. **Postgres** acts as the relational index cache for analytical queries (links, tags, search vectors), and the **Local Filesystem** acts as an asynchronous persistence target.
+## 1. System overview (v2)
 
 ```mermaid
-flowchart TD
-    Browser["Browser / Client"]
+flowchart LR
+  Browser["Browser<br/>(rendered HTML + textarea)"]
 
-    subgraph Server["sedum — Rust single binary"]
-        HTTP["axum HTTP Layer"]
-        Rocks["RocksDB\n(Primary Store: Raw Markdown)"]
-        IndexerTask["Postgres Indexer Task\n(Async Loop)"]
-        FileSyncTask["Filesystem Sync Task\n(Async Loop)"]
-    end
+  subgraph Server["sedum — Rust single binary"]
+    HTTP["axum HTTP layer<br/>(read-only on Postgres)"]
+    Store["Store<br/>(atomic file I/O)"]
+    Rocks["RocksDB<br/>(durable dirty queue<br/>+ body read cache)"]
+    Indexer["Background indexer<br/>(drains queue → Postgres)"]
+    Reconcile["Reconcile task<br/>(periodic / manual)"]
+  end
 
-    PG[("Postgres\n(Index Cache:\nbody_tsv, links, tags)")]
-    FS[("sedum/ Markdown files\n(Local Sync Target)")]
+  FS[("sedum/ Markdown<br/>source of truth")]
+  PG[("Postgres<br/>disposable index")]
 
-    Browser -->|"GET view / edit"| HTTP
-    Browser -->|"POST save"| HTTP
-    HTTP -->|"Read/write body"| Rocks
-
-    HTTP -->|"FTS / Tag queries"| PG
-    HTTP -->|"Fetch matching bodies\n& build snippets"| Rocks
-
-    Rocks -.->|"Read dirty keys"| IndexerTask
-    IndexerTask -->|"Write index records"| PG
-
-    Rocks -.->|"Read dirty keys"| FileSyncTask
-    FileSyncTask -->|"Write .md files"| FS
+  Browser -->|"GET view / edit"| HTTP
+  Browser -->|"POST save"| HTTP
+  HTTP -->|"atomic write temp + rename"| Store
+  Store --> FS
+  HTTP -->|"mirror body + enqueue dirty key"| Rocks
+  HTTP -->|"read body (cache hit)"| Rocks
+  HTTP -->|"queries:<br/>backlinks / tags / FTS"| PG
+  Rocks -.->|"pop dirty keys"| Indexer
+  Indexer -->|"reindex tx"| PG
+  FS -.->|"mtime + hash scan"| Reconcile
+  Reconcile -.->|"external edits → enqueue"| Rocks
 ```
 
 ---
 
-## 2. Rendering Model — View vs. Edit
+## 2. Rendering model — view vs edit
 
-The rendered view reads directly from RocksDB. Pages are edited via a `<textarea>` and saved instantly back to RocksDB.
+Reads serve from the RocksDB body cache, falling back to the file on a miss
+(then back-filling the cache). Editing is opt-in, no client JS — unchanged from
+v1 in spirit.
 
 ```mermaid
 flowchart TD
-    V["GET /page/Foo"] --> X{"Foo exists in RocksDB?"}
-    X -- yes --> R["Read from RocksDB → render HTML"] --> RO["Readonly view"]
-    X -- no --> NEW["Offer: create page Foo?"]
+  V["GET /page/Foo"] --> X{"Foo in RocksDB cache?"}
+  X -- hit --> R["render cached body → HTML"] --> RO["readonly view"]
+  X -- miss --> F{"Foo.md exists?"}
+  F -- yes --> RB["read file → back-fill cache → render"] --> RO
+  F -- no --> NEW["offer: create Foo?"]
 
-    RO -->|"Click Edit"| E["GET /page/Foo/edit"]
-    E --> T["Read from RocksDB → textarea"]
-    T -->|"Save"| P["POST /page/Foo"]
-    P --> S["Write page content to RocksDB\nSet sync_needed = true\nSet index_needed = true"]
-    S --> RD["303 redirect → /page/Foo (view)"]
-    RD --> V
+  RO -->|"click Edit"| E["GET /page/Foo/edit"]
+  E --> T["read body → textarea<br/>(embed content-hash, per ADR-3)"]
+  T -->|"Save"| P["POST /page/Foo"]
+  P --> S["atomic save + enqueue (see §3)"]
+  S --> RD["303 redirect → /page/Foo (view)"]
+  RD --> V
 ```
 
 ---
 
-## 3. Save $\rightarrow$ Sync & Index Pipeline
+## 3. Save → enqueue → index pipeline
 
-Saves write to RocksDB and return immediately. Background workers perform database indexing and filesystem writes asynchronously.
+The handler writes the file (truth), mirrors the body into RocksDB, and enqueues
+a dirty key — then returns. It **never** indexes. The indexer is woken by an
+in-process signal (no polling interval) and drains the durable queue; the queue
+is also drained on startup, so nothing is lost across a crash.
 
 ```mermaid
 sequenceDiagram
-    participant B as Browser
-    participant H as axum handler
-    participant R as RocksDB (KV)
-    participant I as Indexer Task
-    participant PG as Postgres
-    participant S as File Sync Task
-    participant FS as sedum/*.md
+  participant B as Browser
+  participant H as axum handler
+  participant FS as sedum/*.md
+  participant R as RocksDB (queue + cache)
+  participant I as Indexer
+  participant PG as Postgres
 
-    B->>H: POST /page/Foo (markdown body)
-    H->>R: Write key page:foo (body, sync_needed=true, index_needed=true)
-    H-->>B: 303 Redirect to page view
-    Note over H,R: Handler returns in <5ms
+  B->>H: POST /page/Foo (markdown body + prior hash)
+  Note over H: re-hash file; mismatch → 409 (ADR-3 optimistic concurrency)
+  H->>FS: write Foo.md.tmp + fsync → rename (atomic, truth)
+  H->>R: mirror body + hash; enqueue dirty key (WAL fsync)
+  H->>I: signal "work available" (in-process)
+  H-->>B: 303 redirect → /page/Foo (view)
+  Note over H,PG: handler enqueues; it does NOT touch the index
 
-    par Postgres Indexing (Every 300ms)
-        I->>R: Scan for keys where index_needed = true
-        R-->>I: Return changed pages
-        I->>I: Parse comrak links, tags, FTS vector
-        I->>PG: Upsert index rows (Single Transaction)
-        I->>R: Update index_needed = false
-    and Filesystem Persistence (Every 1-2s)
-        S->>R: Scan for keys where sync_needed = true
-        R-->>S: Return changed pages
-        S->>FS: Write sub/Bar.md (Write temp + rename)
-        S->>R: Update sync_needed = false
-    end
+  I->>R: pop next dirty key
+  R-->>I: Foo (body + hash)
+  I->>I: parse title, [[links]], #tags, body_tsv
+  I->>PG: reindex transaction (§4 of v1)
+  I->>R: mark key done (remove from queue CF)
+  Note over I,R: the queue is the trigger — no inotify watch
 ```
+
+Crash safety: file write commits the truth; if the process dies before the
+enqueue, the periodic reconcile (§5) re-detects the change by content-hash. If it
+dies after enqueue but before indexing, the durable queue replays on startup.
 
 ---
 
-## 4. FTS Search & Snippet Generation Flow
+## 4. FTS search & snippets
 
-Search queries run on Postgres's GIN vector index. Search snippets are generated in Rust memory after loading matching page bodies from RocksDB.
+Unchanged from v1 and ADR-1: search reads **only** Postgres, snippets via
+`ts_headline('english', …)`. The RocksDB body cache is not on the search path —
+keeping ADR-1 intact and search a single round-trip.
 
 ```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant H as axum handler
-    participant PG as Postgres (Index)
-    participant R as RocksDB (Store)
-
-    B->>H: GET /search?q=postgres
-    H->>PG: SELECT slug, title FROM tb_pages WHERE body_tsv @@ to_tsquery('postgres')
-    PG-->>H: Return matching metadata (e.g. 10 page slugs)
-    loop For each matching slug
-        H->>R: Point read raw body text
-        R-->>H: Return body Markdown
-        H->>H: Extract regex snippet and wrap matches in <mark>
-    end
-    H-->>B: Render search results page with highlighted snippets
+flowchart LR
+  SR["GET /search?q="] -->|"body_tsv @@ query (GIN)<br/>ts_headline snippet"| PG[("Postgres")]
+  BL["GET /page/Foo/backlinks"] -->|"links.target_id = Foo.id<br/>LIMIT/OFFSET"| PG
+  TG["GET /tags/:tag"] -->|"tags.tag = :tag"| PG
 ```
 
 ---
 
-## 5. Directory Reconciliation (Manual Import/Sync)
+## 5. External-edit reconciliation (replaces the live watch)
 
-To handle external filesystem changes (e.g., git pulls, external editor writes), a reconciliation process is triggered manually or by CLI.
+External writes (git pull, another editor) have no `notify` event in v2. A
+reconcile task — periodic, manual, and run once at startup — walks the tree and
+enqueues anything whose content changed. mtime is a cheap pre-filter only;
+**content-hash confirms** the change (ADR-3: mtime lies across git/rsync).
 
 ```mermaid
 flowchart TD
-    A["Trigger Sync"] --> B["Walk sedum/**/*.md on disk"]
-    B --> C{"file.mtime > RocksDB.mtime?"}
-    C -- Yes --> D["Read file content\nWrite to RocksDB\nSet index_needed=true\nSet sync_needed=false"]
-    C -- No --> E["Skip"]
-    
-    A --> F["Find keys in RocksDB absent on disk"]
-    F --> G["Delete page from RocksDB\nTrigger Postgres cascade delete"]
-    
-    D --> H["Trigger Postgres Indexer sweep"]
-    G --> H
+  A["reconcile (startup / periodic / manual)"] --> B["scan sedum/**/*.md"]
+  B --> C{"mtime changed?"}
+  C -- no --> E["skip"]
+  C -- yes --> D{"content-hash ≠ cached hash?"}
+  D -- no --> E
+  D -- yes --> U["update RocksDB cache + hash<br/>enqueue dirty key"]
+  A --> M["page key with no file on disk"]
+  M --> X["enqueue delete<br/>(Postgres cascade; inbound links → dangling)"]
+  U --> H["indexer drains queue (§3)"]
+  X --> H
 ```
+
+Trade-off vs v1: external edits are picked up at reconcile cadence, not
+instantly. For app-driven editing this is invisible. Deployments that need live
+external-edit pickup *and* stay under the watch budget can add a single
+**directory-level** watch on the content root (watch dirs, not files) to trigger
+a scoped reconcile — optional, off by default.
