@@ -21,8 +21,8 @@ In:
 
 Roadmap (post-MVP): drag/drop image upload to `assets/`, CodeMirror 6 editor.
 
-Dropped: daily note, Obsidian vault import (Obsidian `[[ ]]` compatibility is
-covered by wiki-links).
+Dropped: daily note, Obsidian import (Obsidian `[[ ]]` compatibility is covered
+by wiki-links).
 
 ## Milestones
 
@@ -32,7 +32,7 @@ covered by wiki-links).
 
 ## Decisions
 
-- Postgres index (supersedes the earlier SQLite assumption) — see
-  `docs/architecture.md` and asobi `sedum:decision:postgres-index`.
+- Postgres index — see `docs/architecture.md` and asobi
+  `sedum:decision:postgres-index`.
 - v0 frontend = server-rendered + textarea — asobi
   `sedum:decision:frontend-v0-textarea`.
