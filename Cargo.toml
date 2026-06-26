@@ -9,6 +9,16 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/azusachino/sedum"
 keywords = ["markdown", "wiki", "notes", "backlinks", "fulltext"]
 categories = ["text-processing", "web-programming"]
+# Publish only the runnable crate; keep repo-internal docs/config/CI out of the
+# permanent public package.
+include = [
+  "src/**/*",
+  "static/**/*",
+  "migrations/**/*",
+  "/Cargo.toml",
+  "/README.md",
+  "/LICENSE",
+]
 
 [dependencies]
 anyhow = "1"
