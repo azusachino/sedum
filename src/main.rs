@@ -7,8 +7,10 @@ use axum::{
     Form, Router,
 };
 use minijinja::{context, Environment};
+use sedum::markdown::{extract_title, parse_frontmatter, render_html};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -20,7 +22,6 @@ use tracing::{info, warn};
 
 #[derive(Clone)]
 struct AppState {
-    #[allow(dead_code)]
     db: sqlx::PgPool,
     templates: Arc<Environment<'static>>,
 }
@@ -110,6 +111,7 @@ fn app(state: AppState) -> Router {
         .route("/", get(redirect_to_index))
         .route("/p/{*path}", get(page_handler).post(page_save))
         .nest_service("/static", ServeDir::new("static"))
+        .nest_service("/assets", ServeDir::new("sedum/assets"))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -132,54 +134,6 @@ fn compute_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
-}
-
-// Helper to parse frontmatter and body
-fn parse_markdown(content: &str) -> (Option<serde_yaml::Value>, &str) {
-    if content.starts_with("---\n") || content.starts_with("---\r\n") {
-        let header_len = if content.starts_with("---\n") { 4 } else { 5 };
-        let rest = &content[header_len..];
-        let mut search_idx = 0;
-        while let Some(idx) = rest[search_idx..].find("\n---") {
-            let actual_idx = search_idx + idx;
-            let after = &rest[actual_idx + 4..];
-            if after.is_empty() || after.starts_with('\n') || after.starts_with('\r') {
-                let yaml_str = &rest[..actual_idx];
-                let after_first_nl = after.find('\n').map_or(0, |n| n + 1);
-                let body_str = &after[after_first_nl..];
-                if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(yaml_str) {
-                    return (Some(yaml), body_str);
-                }
-                break;
-            }
-            search_idx = actual_idx + 4;
-        }
-    }
-    (None, content)
-}
-
-// Extract title from frontmatter, H1 header, or default to path basename
-fn extract_title(path: &str, frontmatter: Option<&serde_yaml::Value>, body: &str) -> String {
-    if let Some(fm) = frontmatter {
-        if let Some(title) = fm.get("title").and_then(|t| t.as_str()) {
-            return title.to_string();
-        }
-    }
-
-    // Fallback to first H1
-    for line in body.lines() {
-        let trimmed = line.trim();
-        if let Some(stripped) = trimmed.strip_prefix("# ") {
-            return stripped.trim().to_string();
-        }
-    }
-
-    // Fallback to basename
-    StdPath::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path)
-        .to_string()
 }
 
 // Dispatch to view or edit based on the path suffix
@@ -215,19 +169,19 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     let raw_content = fs::read_to_string(&file_path)
         .context(format!("Failed to read file: {}", file_path.display()))?;
     let loaded_hash = compute_hash(&raw_content);
-    let (frontmatter, body) = parse_markdown(&raw_content);
+    let (frontmatter, body) = parse_frontmatter(&raw_content);
     let title = extract_title(&path, frontmatter.as_ref(), body);
 
-    // Setup comrak options
-    let mut options = comrak::Options::default();
-    options.extension.table = true;
-    options.extension.strikethrough = true;
-    options.extension.tasklist = true;
-    options.extension.autolink = true;
-    options.extension.alerts = true;
-    options.extension.wikilinks_title_after_pipe = true;
+    // Resolve wikilink targets against the index so missing pages render
+    // distinctly. The index is a disposable read model; a freshly saved page
+    // may briefly resolve as missing until the background indexer catches up.
+    let slugs: Vec<(String,)> = sqlx::query_as("SELECT slug FROM tb_pages")
+        .fetch_all(&state.db)
+        .await
+        .context("Failed to load page slugs for wikilink resolution")?;
+    let slug_set: HashSet<String> = slugs.into_iter().map(|(s,)| s).collect();
 
-    let content_html = comrak::markdown_to_html(body, &options);
+    let content_html = render_html(body, &|norm| slug_set.contains(norm));
 
     // Check has_mermaid
     let has_mermaid = raw_content.contains("```mermaid");
@@ -381,26 +335,5 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("mermaid.min.js"));
-    }
-
-    #[test]
-    fn test_parse_markdown_frontmatter() {
-        let content = "---\ntitle: Hello World\n---\n# Header\nBody content";
-        let (yaml, body) = parse_markdown(content);
-        assert!(yaml.is_some());
-        let val = yaml.unwrap();
-        assert_eq!(
-            val.get("title").and_then(|t| t.as_str()),
-            Some("Hello World")
-        );
-        assert_eq!(body, "# Header\nBody content");
-    }
-
-    #[test]
-    fn test_parse_markdown_no_frontmatter() {
-        let content = "# Header\nBody content";
-        let (yaml, body) = parse_markdown(content);
-        assert!(yaml.is_none());
-        assert_eq!(body, "# Header\nBody content");
     }
 }

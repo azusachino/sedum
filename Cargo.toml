@@ -73,6 +73,3 @@ needless_pass_by_value = "allow"
 strip = true
 lto = true
 codegen-units = 1
-
-[registries.crates-io]
-protocol = "sparse"

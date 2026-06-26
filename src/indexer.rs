@@ -1,3 +1,6 @@
+use crate::markdown::{
+    comrak_options, extract_title, is_asset_path, normalize_target, parse_frontmatter, EMBED_REGEX,
+};
 use anyhow::Result;
 use comrak::nodes::NodeValue;
 use notify::Watcher;
@@ -11,32 +14,6 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
-
-// Import normalize_slug and other helpers if needed, or define here.
-fn normalize_target(name: &str, is_asset: bool) -> String {
-    let trimmed = name.trim();
-    if is_asset {
-        trimmed.to_lowercase()
-    } else {
-        let stripped = if trimmed.to_lowercase().ends_with(".md") {
-            &trimmed[..trimmed.len() - 3]
-        } else {
-            trimmed
-        };
-        stripped.to_lowercase()
-    }
-}
-
-fn is_asset_path(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".gif")
-        || lower.ends_with(".svg")
-        || lower.ends_with(".pdf")
-        || lower.ends_with(".webp")
-}
 
 fn extract_tags_from_frontmatter(fm: &serde_json::Value) -> HashSet<String> {
     let mut tags = HashSet::new();
@@ -80,51 +57,6 @@ fn extract_aliases(fm: &serde_json::Value) -> HashSet<String> {
     aliases
 }
 
-// Parses frontmatter using serde_yaml
-fn parse_markdown(content: &str) -> (Option<serde_json::Value>, &str) {
-    if content.starts_with("---\n") || content.starts_with("---\r\n") {
-        let header_len = if content.starts_with("---\n") { 4 } else { 5 };
-        let rest = &content[header_len..];
-        let mut search_idx = 0;
-        while let Some(idx) = rest[search_idx..].find("\n---") {
-            let actual_idx = search_idx + idx;
-            let after = &rest[actual_idx + 4..];
-            if after.is_empty() || after.starts_with('\n') || after.starts_with('\r') {
-                let yaml_str = &rest[..actual_idx];
-                let after_first_nl = after.find('\n').map_or(0, |n| n + 1);
-                let body_str = &after[after_first_nl..];
-                if let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(yaml_str) {
-                    return (Some(yaml), body_str);
-                }
-                break;
-            }
-            search_idx = actual_idx + 4;
-        }
-    }
-    (None, content)
-}
-
-fn extract_title(path: &str, frontmatter: Option<&serde_json::Value>, body: &str) -> String {
-    if let Some(fm) = frontmatter {
-        if let Some(title) = fm.get("title").and_then(|t| t.as_str()) {
-            return title.to_string();
-        }
-    }
-
-    for line in body.lines() {
-        let trimmed = line.trim();
-        if let Some(stripped) = trimmed.strip_prefix("# ") {
-            return stripped.trim().to_string();
-        }
-    }
-
-    Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path)
-        .to_string()
-}
-
 struct ExtractedLink {
     kind: String,
     is_embed: bool,
@@ -147,8 +79,7 @@ fn extract_metadata(
     body: &str,
 ) -> PageMetadata {
     let arena = comrak::Arena::new();
-    let mut options = comrak::Options::default();
-    options.extension.wikilinks_title_after_pipe = true;
+    let options = comrak_options();
     let root = comrak::parse_document(&arena, body, &options);
 
     let mut tags = frontmatter
@@ -160,7 +91,6 @@ fn extract_metadata(
     let has_mermaid = body.contains("```mermaid");
 
     lazy_static::lazy_static! {
-        static ref EMBED_REGEX: Regex = Regex::new(r"!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap();
         static ref TAG_REGEX: Regex = Regex::new(r"(?:\s|^|['`\(])#([\p{L}\p{N}][\p{L}\p{N}_\-/]*)").unwrap();
     }
 
@@ -185,6 +115,8 @@ fn extract_metadata(
         }
 
         match &node.data.borrow().value {
+            // Comrak tokenizes `[[Target]]` page links (but never `![[...]]`
+            // embeds — those stay as text and are handled below).
             NodeValue::WikiLink(w) => {
                 let target = w.url.clone();
                 let target_norm = normalize_target(&target, false);
@@ -212,6 +144,8 @@ fn extract_metadata(
                     alias,
                 });
             }
+            // Text nodes carry both inline `#tags` and `![[embed]]` runs, which
+            // comrak does not parse into dedicated nodes.
             NodeValue::Text(t) => {
                 for cap in TAG_REGEX.captures_iter(t) {
                     if let Some(m) = cap.get(1) {
@@ -459,7 +393,7 @@ impl IndexerQueue {
                 Err(_) => 0,
             };
 
-            let (frontmatter, body) = parse_markdown(&raw_content);
+            let (frontmatter, body) = parse_frontmatter(&raw_content);
             let frontmatter_json =
                 frontmatter.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 

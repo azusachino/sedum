@@ -6,3 +6,4 @@
 pub use anyhow::{bail, Context, Result};
 
 pub mod indexer;
+pub mod markdown;

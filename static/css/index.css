@@ -246,6 +246,29 @@ code {
   margin-top: auto;
 }
 
+/* Wikilinks: resolved targets link normally; unresolved ones read as muted
+   dashed placeholders inviting creation. Asset embeds fit the content column. */
+.wikilink {
+  color: var(--primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.wikilink:hover {
+  border-bottom-color: var(--primary);
+}
+
+.wikilink-missing {
+  color: var(--text-muted);
+  border-bottom: 1px dashed var(--text-muted);
+}
+
+.wiki-embed {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
 /* Autocomplete and keyboard shortcuts indicators */
 .kbd-hint {
   display: inline-flex;
