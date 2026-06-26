@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Form, Router,
 };
 use miku::markdown::{extract_title, parse_frontmatter, render_html};
@@ -36,6 +36,13 @@ struct TagCount {
 struct PageRef {
     path: String,
     title: String,
+}
+
+#[derive(serde::Serialize)]
+struct NavNode {
+    name: String,         // folder segment name, or page title for leaves
+    path: Option<String>, // Some(slug-path without .md) for pages; None for folders
+    children: Vec<NavNode>,
 }
 
 #[derive(Clone)]
@@ -131,6 +138,8 @@ fn app(state: AppState) -> Router {
         .route("/tags", get(tags_index))
         .route("/tags/{tag}", get(tag_filter))
         .route("/p/{*path}", get(page_handler).post(page_save))
+        .route("/api/move", post(page_move))
+        .route("/api/trash", post(page_trash))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/assets", ServeDir::new("miku/assets"))
         .layer(TraceLayer::new_for_http())
@@ -157,6 +166,113 @@ fn compute_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+// Helper struct for building nav tree (internal use only)
+#[derive(Debug)]
+struct TreeNode {
+    title: String,
+    children: std::collections::BTreeMap<String, TreeNode>,
+    is_leaf: bool,
+}
+
+// Convert TreeNode BTreeMap tree into Vec<NavNode> with sorting.
+// Folders come first (sorted alphabetically), then pages (sorted alphabetically).
+fn tree_to_nav_nodes(
+    tree: std::collections::BTreeMap<String, TreeNode>,
+    prefix: String,
+) -> Vec<NavNode> {
+    let mut folders = Vec::new();
+    let mut pages = Vec::new();
+
+    for (name, node) in tree {
+        let current_path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+
+        let children = tree_to_nav_nodes(node.children, current_path.clone());
+
+        if node.is_leaf {
+            pages.push(NavNode {
+                name: node.title.clone(),
+                path: Some(current_path.clone()),
+                children,
+            });
+        } else {
+            folders.push(NavNode {
+                name: node.title.clone(),
+                path: None,
+                children,
+            });
+        }
+    }
+
+    // Sort: folders first (by name, case-insensitive), then pages (by name, case-insensitive)
+    folders.sort_by_key(|a| a.name.to_lowercase());
+    pages.sort_by_key(|a| a.name.to_lowercase());
+
+    let mut result = folders;
+    result.extend(pages);
+    result
+}
+
+// Build a nested tree structure from page rows (path_without_md, title).
+// Pure function, no DB, no async. Folders come first (sorted alphabetically),
+// then pages (sorted alphabetically by name). Each row's path is like "a" or
+// "b/c" or "b/d/e" (no .md). The final segment is a page leaf with path =
+// Some(full path) and name = title; intermediate segments are folders with
+// path = None.
+fn build_nav_tree(rows: Vec<(String, String)>) -> Vec<NavNode> {
+    use std::collections::BTreeMap;
+
+    let mut root: BTreeMap<String, TreeNode> = BTreeMap::new();
+
+    for (path, title) in rows {
+        let parts: Vec<&str> = path.split('/').collect();
+
+        // Navigate/create the tree structure
+        let mut current = &mut root;
+        for (i, &part) in parts.iter().enumerate() {
+            let is_final = i == parts.len() - 1;
+
+            if !current.contains_key(part) {
+                current.insert(
+                    part.to_string(),
+                    TreeNode {
+                        title: if is_final {
+                            title.clone()
+                        } else {
+                            part.to_string()
+                        },
+                        children: BTreeMap::new(),
+                        is_leaf: is_final,
+                    },
+                );
+            }
+
+            current = &mut current.get_mut(part).expect("just inserted").children;
+        }
+    }
+
+    tree_to_nav_nodes(root, String::new())
+}
+
+// Sidebar nav: every page in the index, title-sorted, for the explorer list
+// rendered by base.html. The index is the disposable read model; a freshly
+// saved page appears once the background indexer catches up.
+async fn nav_pages(db: &sqlx::PgPool) -> Result<Vec<NavNode>, AppError> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT path, title FROM tb_pages ORDER BY title")
+            .fetch_all(db)
+            .await
+            .context("Failed to load nav pages")?;
+    let stripped_rows: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(path, title)| (path.strip_suffix(".md").unwrap_or(&path).to_string(), title))
+        .collect();
+    Ok(build_nav_tree(stripped_rows))
+}
+
 // Dispatch to view or edit based on the path suffix
 async fn page_handler(
     Path(path): Path<String>,
@@ -174,6 +290,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     info!("Rendering page view for path: {}", path);
     let file_path = safe_file_path(&path)?;
     let template = state.templates.get_template("page.html")?;
+    let nav = nav_pages(&state.db).await?;
 
     if !file_path.exists() {
         let rendered = template.render(context! {
@@ -184,6 +301,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
             loaded_hash => "",
             has_mermaid => false,
             backlinks => Vec::<Backlink>::new(),
+            nav_pages => nav,
         })?;
         return Ok(Html(rendered).into_response());
     }
@@ -247,6 +365,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         loaded_hash => loaded_hash,
         has_mermaid => has_mermaid,
         backlinks => backlinks,
+        nav_pages => nav,
     })?;
 
     Ok(Html(rendered).into_response())
@@ -267,10 +386,12 @@ async fn page_edit(path: String, state: AppState) -> Result<Response, AppError> 
         (String::new(), String::new())
     };
 
+    let nav = nav_pages(&state.db).await?;
     let rendered = template.render(context! {
         path => path,
         body => body,
         loaded_hash => loaded_hash,
+        nav_pages => nav,
     })?;
 
     Ok(Html(rendered).into_response())
@@ -302,11 +423,13 @@ async fn page_save(
         if disk_hash != form.loaded_hash {
             warn!("Conflict detected on page save: path={}", path);
             let template = state.templates.get_template("conflict.html")?;
+            let nav = nav_pages(&state.db).await?;
             let rendered = template.render(context! {
                 path => path,
                 current_content => disk_content,
                 submitted_content => form.body,
                 current_hash => disk_hash,
+                nav_pages => nav,
             })?;
             return Ok((StatusCode::CONFLICT, Html(rendered)).into_response());
         }
@@ -339,6 +462,80 @@ async fn page_save(
 
     info!("Saved page path={} successfully", path);
     Ok(Redirect::to(&format!("/p/{path}")).into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct MoveForm {
+    from: String,
+    to: String,
+}
+
+// Handle moving/renaming a page
+async fn page_move(Form(form): Form<MoveForm>) -> Result<Response, AppError> {
+    info!("Moving page from: {} to: {}", form.from, form.to);
+    let src = safe_file_path(&form.from)?;
+    let dst = safe_file_path(&form.to)?;
+
+    if !src.exists() {
+        return Err(anyhow::anyhow!("Source page not found: {}", form.from).into());
+    }
+
+    if dst.exists() {
+        return Ok((StatusCode::CONFLICT, "Target page already exists").into_response());
+    }
+
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).context(format!(
+            "Failed to create parent directories: {}",
+            parent.display()
+        ))?;
+    }
+
+    fs::rename(&src, &dst).context(format!(
+        "Failed to move file from {} to {}",
+        src.display(),
+        dst.display()
+    ))?;
+
+    info!("Moved page from {} to {} successfully", form.from, form.to);
+    Ok(Redirect::to(&format!("/p/{}", form.to)).into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct TrashForm {
+    path: String,
+}
+
+// Handle trashing a page
+async fn page_trash(Form(form): Form<TrashForm>) -> Result<Response, AppError> {
+    info!("Trashing page: {}", form.path);
+    let src = safe_file_path(&form.path)?;
+
+    if !src.exists() {
+        return Err(anyhow::anyhow!("Page not found: {}", form.path).into());
+    }
+
+    let trash_dir = StdPath::new("miku").join(".trash");
+    fs::create_dir_all(&trash_dir).context(format!(
+        "Failed to create trash directory: {}",
+        trash_dir.display()
+    ))?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("Failed to get current time")?
+        .as_secs();
+    let flattened = form.path.replace('/', "-");
+    let trash_filename = format!("{flattened}-{ts}.md");
+    let trash_dst = trash_dir.join(&trash_filename);
+
+    fs::rename(&src, &trash_dst).context(format!(
+        "Failed to move file to trash: {}",
+        trash_dst.display()
+    ))?;
+
+    info!("Trashed page {} to {}", form.path, trash_filename);
+    Ok(Redirect::to("/p/Index").into_response())
 }
 
 // Search handler: full-text search over pages
@@ -379,9 +576,12 @@ async fn search(
             .collect()
     };
 
+    let nav = nav_pages(&state.db).await?;
     let rendered = template.render(context! {
         query => query_str,
         results => results,
+        nav_pages => nav,
+        section => "search",
     })?;
 
     Ok(Html(rendered).into_response())
@@ -404,8 +604,11 @@ async fn tags_index(State(state): State<AppState>) -> Result<impl IntoResponse, 
         .map(|(tag, count)| TagCount { tag, count })
         .collect();
 
+    let nav = nav_pages(&state.db).await?;
     let rendered = template.render(context! {
         tags => tags,
+        nav_pages => nav,
+        section => "tags",
     })?;
 
     Ok(Html(rendered).into_response())
@@ -437,9 +640,12 @@ async fn tag_filter(
         })
         .collect();
 
+    let nav = nav_pages(&state.db).await?;
     let rendered = template.render(context! {
         tag => tag,
         pages => pages,
+        nav_pages => nav,
+        section => "tags",
     })?;
 
     Ok(Html(rendered).into_response())
@@ -493,5 +699,132 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("mermaid.min.js"));
+    }
+
+    #[test]
+    fn test_build_nav_tree_nested_structure() {
+        let rows = vec![
+            ("a".to_string(), "A".to_string()),
+            ("b/c".to_string(), "C".to_string()),
+            ("b/d".to_string(), "D".to_string()),
+        ];
+        let result = build_nav_tree(rows);
+
+        // Folders first, then pages
+        assert_eq!(result.len(), 2);
+
+        // First should be folder "b" (folders come first)
+        assert_eq!(result[0].name, "b");
+        assert_eq!(result[0].path, None);
+        assert_eq!(result[0].children.len(), 2);
+
+        // Folder b's children should be sorted: c, d (both pages)
+        assert_eq!(result[0].children[0].name, "C");
+        assert_eq!(result[0].children[0].path, Some("b/c".to_string()));
+        assert_eq!(result[0].children[0].children.len(), 0);
+
+        assert_eq!(result[0].children[1].name, "D");
+        assert_eq!(result[0].children[1].path, Some("b/d".to_string()));
+        assert_eq!(result[0].children[1].children.len(), 0);
+
+        // Second should be page "a" (pages come after folders)
+        assert_eq!(result[1].name, "A");
+        assert_eq!(result[1].path, Some("a".to_string()));
+        assert_eq!(result[1].children.len(), 0);
+    }
+
+    #[test]
+    fn test_build_nav_tree_leaf_uses_title() {
+        let rows = vec![("mypage".to_string(), "My Page Title".to_string())];
+        let result = build_nav_tree(rows);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "My Page Title");
+        assert_eq!(result[0].path, Some("mypage".to_string()));
+    }
+
+    #[test]
+    fn test_build_nav_tree_folder_uses_segment() {
+        let rows = vec![
+            ("docs/api".to_string(), "API Reference".to_string()),
+            ("docs/guide".to_string(), "User Guide".to_string()),
+        ];
+        let result = build_nav_tree(rows);
+
+        // Root should have one folder
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "docs");
+        assert_eq!(result[0].path, None);
+        assert_eq!(result[0].children.len(), 2);
+
+        // Children should be sorted alphabetically by name (case-insensitive)
+        assert_eq!(result[0].children[0].name, "API Reference");
+        assert_eq!(result[0].children[1].name, "User Guide");
+    }
+
+    #[test]
+    fn test_build_nav_tree_sorting_case_insensitive() {
+        let rows = vec![
+            ("zebra".to_string(), "Zebra".to_string()),
+            ("apple".to_string(), "Apple".to_string()),
+            ("Banana".to_string(), "Banana".to_string()),
+        ];
+        let result = build_nav_tree(rows);
+
+        // Should be sorted case-insensitively
+        assert_eq!(result[0].name, "Apple");
+        assert_eq!(result[1].name, "Banana");
+        assert_eq!(result[2].name, "Zebra");
+    }
+
+    #[test]
+    fn test_build_nav_tree_empty() {
+        let rows = vec![];
+        let result = build_nav_tree(rows);
+
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_build_nav_tree_deep_nesting() {
+        let rows = vec![
+            ("a/b/c/d".to_string(), "Deep Page".to_string()),
+            ("a/b/e".to_string(), "E".to_string()),
+        ];
+        let result = build_nav_tree(rows);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "a");
+        assert_eq!(result[0].path, None);
+
+        let level1 = &result[0].children;
+        assert_eq!(level1.len(), 1);
+        assert_eq!(level1[0].name, "b");
+        assert_eq!(level1[0].path, None);
+
+        let level2 = &level1[0].children;
+        assert_eq!(level2.len(), 2);
+        // c folder should come before e page
+        assert_eq!(level2[0].name, "c");
+        assert_eq!(level2[0].path, None);
+        assert_eq!(level2[1].name, "E");
+        assert_eq!(level2[1].path, Some("a/b/e".to_string()));
+
+        let level3 = &level2[0].children;
+        assert_eq!(level3.len(), 1);
+        assert_eq!(level3[0].name, "Deep Page");
+        assert_eq!(level3[0].path, Some("a/b/c/d".to_string()));
+    }
+
+    #[test]
+    fn test_safe_file_path_rejects_traversal() {
+        let result = safe_file_path("../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_file_path_rejects_absolute() {
+        let result = safe_file_path("/abs");
+        assert!(result.is_err());
     }
 }

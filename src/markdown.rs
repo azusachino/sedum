@@ -17,6 +17,13 @@ lazy_static::lazy_static! {
     /// the renderer — never as `WikiLink` AST nodes.
     pub static ref EMBED_REGEX: Regex =
         Regex::new(r"!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap();
+
+    /// Matches inline `#hashtags`. Kept identical to the indexer's tag regex so
+    /// the links the renderer emits resolve to the same tags the indexer stored.
+    /// Capture group 1 is the tag name (the leading delimiter is part of match 0
+    /// but not the tag).
+    pub static ref TAG_REGEX: Regex =
+        Regex::new(r"(?:\s|^|['`\(])#([\p{L}\p{N}][\p{L}\p{N}_\-/]*)").unwrap();
 }
 
 /// Split YAML frontmatter from the Markdown body. Returns the parsed
@@ -147,6 +154,18 @@ fn set_html_inline<'a>(node: &'a AstNode<'a>, html: String) {
     node.data.borrow_mut().value = NodeValue::HtmlInline(html);
 }
 
+/// Replace a block-level node with raw-HTML block markup, dropping its children.
+fn set_html_block<'a>(node: &'a AstNode<'a>, html: String) {
+    let children: Vec<_> = node.children().collect();
+    for c in children {
+        c.detach();
+    }
+    node.data.borrow_mut().value = NodeValue::HtmlBlock(comrak::nodes::NodeHtmlBlock {
+        block_type: 0,
+        literal: html,
+    });
+}
+
 /// Render `[[Target]]` / `[[Target|label]]` as an anchor to the `/p/` page
 /// route, tagged `wikilink-missing` when `resolved` reports the slug is absent.
 fn anchor_html(target: &str, label: &str, resolved: &dyn Fn(&str) -> bool) -> String {
@@ -165,17 +184,45 @@ fn anchor_html(target: &str, label: &str, resolved: &dyn Fn(&str) -> bool) -> St
     )
 }
 
-/// Rewrite a text node that contains `![[...]]` embeds into HTML: asset embeds
-/// become `<img>` under `/assets/`; page embeds fall back to a page link (no
-/// transclusion in the MVP). Surrounding text is HTML-escaped, since the result
-/// is injected verbatim as raw HTML.
-fn render_text_with_embeds(text: &str, resolved: &dyn Fn(&str) -> bool) -> String {
-    let mut out = String::new();
-    let mut last = 0;
+/// Render an inline `#tag` as a link to its `/tags/{tag}` filter page.
+fn tag_html(tag: &str) -> String {
+    format!(
+        "<a href=\"/tags/{}\" class=\"tag-inline\">#{}</a>",
+        escape_attr(tag),
+        escape_text(tag)
+    )
+}
+
+/// True when a text node sits inside a heading, link, or code context, where
+/// inline `#tags` must NOT be linkified — kept in sync with the indexer's skip
+/// rule so rendered tag links match the indexed tag set.
+fn tag_skipped<'a>(node: &'a AstNode<'a>) -> bool {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        match &parent.data.borrow().value {
+            NodeValue::Heading(_) | NodeValue::CodeBlock(_) | NodeValue::Link(_) => return true,
+            _ => {}
+        }
+        current = parent.parent();
+    }
+    false
+}
+
+/// Rewrite a text node's `![[...]]` embeds and (when `allow_tags`) inline
+/// `#hashtags` into HTML in a single left-to-right pass: asset embeds become
+/// `<img>` under `/assets/`; page embeds fall back to a page link; tags become
+/// links to `/tags/{tag}`. Surrounding text is HTML-escaped, since the result is
+/// injected verbatim as raw HTML.
+fn render_text_inlines(text: &str, resolved: &dyn Fn(&str) -> bool, allow_tags: bool) -> String {
+    struct Hit {
+        start: usize,
+        end: usize,
+        html: String,
+    }
+    let mut hits: Vec<Hit> = Vec::new();
+
     for cap in EMBED_REGEX.captures_iter(text) {
         let m = cap.get(0).unwrap();
-        out.push_str(&escape_text(&text[last..m.start()]));
-
         let target = cap.get(1).map_or("", |x| x.as_str()).trim();
         let label = cap
             .get(2)
@@ -193,8 +240,45 @@ fn render_text_with_embeds(text: &str, resolved: &dyn Fn(&str) -> bool) -> Strin
         } else {
             anchor_html(target, label, resolved)
         };
-        out.push_str(&html);
-        last = m.end();
+        hits.push(Hit {
+            start: m.start(),
+            end: m.end(),
+            html,
+        });
+    }
+
+    if allow_tags {
+        for cap in TAG_REGEX.captures_iter(text) {
+            let whole = cap.get(0).unwrap();
+            let tag = cap.get(1).unwrap();
+            // Skip a tag that overlaps an embed (e.g. inside its label).
+            if hits
+                .iter()
+                .any(|h| tag.start() < h.end && h.start < tag.end())
+            {
+                continue;
+            }
+            // The match includes a leading delimiter char before `#`; keep it.
+            let delim = &text[whole.start()..tag.start()];
+            hits.push(Hit {
+                start: whole.start(),
+                end: whole.end(),
+                html: format!("{}{}", escape_text(delim), tag_html(tag.as_str())),
+            });
+        }
+    }
+
+    hits.sort_by_key(|h| h.start);
+
+    let mut out = String::new();
+    let mut last = 0;
+    for h in hits {
+        if h.start < last {
+            continue; // defensive: drop any overlap
+        }
+        out.push_str(&escape_text(&text[last..h.start]));
+        out.push_str(&h.html);
+        last = h.end;
     }
     out.push_str(&escape_text(&text[last..]));
     out
@@ -221,12 +305,22 @@ pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
     for node in nodes {
         enum Rewrite {
             Link(String),
-            EmbedText(String),
+            // Inline text carrying embeds and/or tags; bool = linkify tags here.
+            InlineText(String, bool),
+            Mermaid(String),
         }
+        let allow_tags = !tag_skipped(node);
         let rewrite = match &node.data.borrow().value {
             NodeValue::WikiLink(w) => Some(Rewrite::Link(w.url.clone())),
-            NodeValue::Text(t) if EMBED_REGEX.is_match(t) => {
-                Some(Rewrite::EmbedText(t.to_string()))
+            NodeValue::Text(t)
+                if EMBED_REGEX.is_match(t) || (allow_tags && TAG_REGEX.is_match(t)) =>
+            {
+                Some(Rewrite::InlineText(t.to_string(), allow_tags))
+            }
+            // Fenced ```mermaid blocks become <pre class="mermaid"> so mermaid.js
+            // renders them as diagrams instead of Prism highlighting them as code.
+            NodeValue::CodeBlock(cb) if cb.info.split_whitespace().next() == Some("mermaid") => {
+                Some(Rewrite::Mermaid(cb.literal.clone()))
             }
             _ => None,
         };
@@ -236,8 +330,14 @@ pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
                 let html = anchor_html(&url, &node_label(node), resolved);
                 set_html_inline(node, html);
             }
-            Some(Rewrite::EmbedText(text)) => {
-                set_html_inline(node, render_text_with_embeds(&text, resolved));
+            Some(Rewrite::InlineText(text, tags)) => {
+                set_html_inline(node, render_text_inlines(&text, resolved, tags));
+            }
+            Some(Rewrite::Mermaid(src)) => {
+                set_html_block(
+                    node,
+                    format!("<pre class=\"mermaid\">{}</pre>", escape_text(&src)),
+                );
             }
             None => {}
         }
@@ -293,6 +393,42 @@ mod tests {
         // The leading `!` must not leak into the output.
         assert!(!html.contains(">!<"));
         assert!(!html.contains("!<img"));
+    }
+
+    #[test]
+    fn test_render_inline_tag_linkified() {
+        let html = render_html("Tagged with #feature and #guide here.", &|_| true);
+        assert!(html.contains(r#"<a href="/tags/feature" class="tag-inline">#feature</a>"#));
+        assert!(html.contains(r#"<a href="/tags/guide" class="tag-inline">#guide</a>"#));
+    }
+
+    #[test]
+    fn test_render_tag_skipped_in_heading() {
+        let html = render_html("# Heading #notag\n", &|_| true);
+        assert!(!html.contains("tag-inline"));
+    }
+
+    #[test]
+    fn test_render_tag_and_wikilink_together() {
+        let html = render_html("See [[Index]] about #docs", &|_| true);
+        assert!(html.contains(r#"<a href="/p/Index" class="wikilink">Index</a>"#));
+        assert!(html.contains(r#"<a href="/tags/docs" class="tag-inline">#docs</a>"#));
+    }
+
+    #[test]
+    fn test_render_mermaid_block() {
+        let html = render_html("```mermaid\ngraph TD; A-->B;\n```", &|_| true);
+        assert!(html.contains(r#"<pre class="mermaid">"#));
+        assert!(html.contains("graph TD; A--&gt;B;"));
+        // Must not be emitted as a Prism-highlightable code block.
+        assert!(!html.contains("language-mermaid"));
+    }
+
+    #[test]
+    fn test_render_non_mermaid_code_block_untouched() {
+        let html = render_html("```rust\nfn main() {}\n```", &|_| true);
+        assert!(html.contains("language-rust"));
+        assert!(!html.contains(r#"class="mermaid""#));
     }
 
     #[test]

@@ -22,6 +22,11 @@ services:
   miku:
     build: .
     container_name: miku-app
+    # Run as the host user (rootless keep-id) so the app can write the
+    # bind-mounted miku/ files while they stay owned by you on the host. The
+    # wiki is filesystem-owned: you edit the same .md files from host or browser.
+    userns_mode: keep-id
+    user: "1000:1000"
     depends_on:
       postgres:
         condition: service_healthy

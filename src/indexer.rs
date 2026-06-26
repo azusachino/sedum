@@ -15,6 +15,14 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+// Skip dot-dirs/files (.trash soft-delete archive, .git, etc.) anywhere in the
+// relative path so trashed pages and VCS metadata never enter the index.
+fn is_hidden_rel(rel_path: &Path) -> bool {
+    rel_path
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+}
+
 fn extract_tags_from_frontmatter(fm: &serde_json::Value) -> HashSet<String> {
     let mut tags = HashSet::new();
     if let Some(tags_val) = fm.get("tags") {
@@ -231,6 +239,10 @@ impl IndexerQueue {
                                 continue;
                             }
                             if let Ok(rel_path) = path.strip_prefix(&content_root_for_watcher) {
+                                // Skip dot-dirs (.trash soft-delete archive, .git, etc.)
+                                if is_hidden_rel(rel_path) {
+                                    continue;
+                                }
                                 let w_event = if path.exists() {
                                     WatcherEvent::Modified(rel_path.to_path_buf())
                                 } else {
@@ -263,6 +275,23 @@ impl IndexerQueue {
             watcher.watch(&content_root, notify::RecursiveMode::Recursive)?;
             info!("Created and watched content root {:?}", content_root);
         }
+
+        // 3. Periodic reconcile fallback. inotify events do not propagate across
+        // some container bind mounts (e.g. podman), so the notify watcher alone
+        // can miss every change after startup. Poll-reconcile on an interval as a
+        // safety net: reconcile_all is idempotent (mtime-based upserts +
+        // delete-missing) and runs on the same single-writer consumer via the
+        // __reconcile__ sentinel, so this never races the watcher or the handlers.
+        let reconcile_sender = sender.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(5));
+            ticker.tick().await; // consume the immediate first tick (startup sweep covers it)
+            loop {
+                ticker.tick().await;
+                let _ = reconcile_sender
+                    .try_send(WatcherEvent::Modified(PathBuf::from("__reconcile__")));
+            }
+        });
 
         Ok(Self {
             sender,
@@ -515,6 +544,13 @@ impl IndexerQueue {
                     for entry in fs::read_dir(dir)? {
                         let entry = entry?;
                         let path = entry.path();
+                        // Skip dot-dirs (.trash soft-delete archive, .git, etc.).
+                        let is_dot = path
+                            .file_name()
+                            .map_or(false, |n| n.to_string_lossy().starts_with('.'));
+                        if is_dot {
+                            continue;
+                        }
                         if path.is_dir() {
                             walk_dir(&path, files)?;
                         } else if path.extension().map_or(false, |ext| ext == "md") {

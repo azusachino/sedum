@@ -55,23 +55,99 @@
                     <span>Miku</span>
                 </div>
                 
-                <nav class="nav-links">
-                    <a href="/p/Index" class="nav-item {% if path == 'Index' %}active{% endif %}">
-                        <span>📖 Index</span>
-                    </a>
-                    <a href="/p/Sandbox" class="nav-item {% if path == 'Sandbox' %}active{% endif %}">
-                        <span>🧪 Sandbox</span>
-                    </a>
-                    <a href="/search" class="nav-item">
-                        <span>🔍 Search</span>
-                    </a>
-                    <a href="/tags" class="nav-item">
-                        <span>🏷️ Tags</span>
-                    </a>
-                    <a href="/p/Settings" class="nav-item {% if path == 'Settings' %}active{% endif %}">
-                        <span>⚙️ Settings</span>
-                    </a>
+                {% set sec = section | default('files') %}
+                <!-- Top-level section tabs (server-rendered links) -->
+                <nav class="section-tabs">
+                    <a href="/p/Index" class="section-tab {% if sec == 'files' %}active{% endif %}">📁 Files</a>
+                    <a href="/search" class="section-tab {% if sec == 'search' %}active{% endif %}">🔍 Search</a>
+                    <a href="/tags" class="section-tab {% if sec == 'tags' %}active{% endif %}">🏷️ Tags</a>
                 </nav>
+
+                <!-- Recursive macro for rendering nav tree -->
+                {% macro nav_node(node, prefix) %}
+                  {% if node.path %}
+                    <!-- PAGE leaf -->
+                    <div class="tree-row tree-page" draggable="true"
+                         @dragstart="$event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/plain', '{{ node.path }}')"
+                         x-data="{ menu: false, rename: false }">
+                      <!-- draggable=false so the row (not the link's URL) owns the drag payload -->
+                      <a href="/p/{{ node.path }}" draggable="false" class="tree-link {% if path == node.path %}active{% endif %}">{{ node.name }}</a>
+                      <button type="button" class="tree-menu-btn" @click="menu = !menu" aria-label="Actions">⋯</button>
+                      <div class="tree-menu" x-show="menu" @click.outside="menu = false" x-cloak>
+                        <button type="button" @click="rename = true; menu = false">Move/Rename</button>
+                        <form method="post" action="/api/trash"
+                              onsubmit="return confirm('Move this page to trash?')">
+                          <input type="hidden" name="path" value="{{ node.path }}">
+                          <button type="submit" class="tree-menu-danger">Delete</button>
+                        </form>
+                      </div>
+                      <form class="tree-rename" method="post" action="/api/move" x-show="rename" x-cloak>
+                        <input type="hidden" name="from" value="{{ node.path }}">
+                        <input type="text" name="to" value="{{ node.path }}" aria-label="New path">
+                        <button type="submit">Save</button>
+                        <button type="button" @click="rename = false">Cancel</button>
+                      </form>
+                    </div>
+                  {% else %}
+                    <!-- FOLDER -->
+                    {% set folder_path = (prefix ~ '/' ~ node.name) if prefix else node.name %}
+                    <div class="tree-folder" x-data="{ open: true, dragOver: false }">
+                      <div class="tree-row tree-folder-row" :class="{ 'drag-over': dragOver }"
+                           @dragover.prevent="dragOver = true"
+                           @dragleave="dragOver = false"
+                           @drop.prevent.stop="
+                             dragOver = false;
+                             const from = $event.dataTransfer.getData('text/plain');
+                             if(!from) return;
+                             const base = from.split('/').pop();
+                             const to = '{{ folder_path }}' + '/' + base;
+                             if (from === to) return;
+                             const fd = new FormData(); fd.append('from', from); fd.append('to', to);
+                             fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
+                               .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
+                           "
+                           @click="open = !open">
+                        <span class="tree-chevron" x-text="open ? '▾' : '▸'"></span>
+                        <span class="tree-folder-name">{{ node.name }}</span>
+                      </div>
+                      <div class="tree-children" x-show="open" x-cloak>
+                        {% for child in node.children %}{{ nav_node(child, folder_path) }}{% endfor %}
+                      </div>
+                    </div>
+                  {% endif %}
+                {% endmacro %}
+
+                <!-- File directory viewer -->
+                <div class="file-viewer">
+                  <span class="file-viewer-title">Files</span>
+                  <!-- New page: type a name (supports nested foo/bar), Enter -> editor -->
+                  <form class="new-page-form"
+                        onsubmit="event.preventDefault(); const n = this.querySelector('.new-page-input').value.trim(); if (n) window.location.href = '/p/' + n.split('/').map(encodeURIComponent).join('/') + '/edit';">
+                    <input class="new-page-input" type="text"
+                           placeholder="New page name…" autocomplete="off" aria-label="New page name">
+                    <button class="new-page-btn" type="submit" aria-label="Create page">+</button>
+                  </form>
+                  <!-- Root drop zone: dropping here moves a page to the top level -->
+                  <div class="nav-tree" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
+                       @dragover.prevent="dragOver = true"
+                       @dragleave="dragOver = false"
+                       @drop.prevent="
+                         dragOver = false;
+                         const from = $event.dataTransfer.getData('text/plain');
+                         if(!from) return;
+                         const to = from.split('/').pop();
+                         if (from === to) return;
+                         const fd = new FormData(); fd.append('from', from); fd.append('to', to);
+                         fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
+                           .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
+                       ">
+                    {% if nav_pages %}
+                      {% for node in nav_pages %}{{ nav_node(node, '') }}{% endfor %}
+                    {% else %}
+                      <span class="file-viewer-empty">No pages yet.</span>
+                    {% endif %}
+                  </div>
+                </div>
             </div>
             
             <!-- Theme Switcher Widget -->
