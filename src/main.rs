@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
@@ -127,6 +127,7 @@ async fn main() -> Result<()> {
 fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(redirect_to_index))
+        .route("/search", get(search))
         .route("/tags", get(tags_index))
         .route("/tags/{tag}", get(tag_filter))
         .route("/p/{*path}", get(page_handler).post(page_save))
@@ -338,6 +339,52 @@ async fn page_save(
 
     info!("Saved page path={} successfully", path);
     Ok(Redirect::to(&format!("/p/{path}")).into_response())
+}
+
+// Search handler: full-text search over pages
+#[derive(serde::Deserialize)]
+struct SearchParams {
+    q: Option<String>,
+}
+
+async fn search(
+    Query(params): Query<SearchParams>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    info!("Rendering search");
+    let template = state.templates.get_template("search.html")?;
+
+    let query_str = params.q.as_deref().unwrap_or("").trim().to_string();
+
+    let results = if query_str.is_empty() {
+        Vec::new()
+    } else {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT path, title
+             FROM tb_pages
+             WHERE body_tsv @@ websearch_to_tsquery('english', $1)
+             ORDER BY ts_rank(body_tsv, websearch_to_tsquery('english', $1)) DESC
+             LIMIT 50",
+        )
+        .bind(&query_str)
+        .fetch_all(&state.db)
+        .await
+        .context("Failed to execute full-text search")?;
+
+        rows.into_iter()
+            .map(|(path, title)| PageRef {
+                path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
+                title,
+            })
+            .collect()
+    };
+
+    let rendered = template.render(context! {
+        query => query_str,
+        results => results,
+    })?;
+
+    Ok(Html(rendered).into_response())
 }
 
 // Tags index handler: list all tags with their counts

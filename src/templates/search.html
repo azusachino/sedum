@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}
+Sedum - Search
+{% endblock %}
+
+{% block content %}
+<article>
+    <h1>Search</h1>
+    <form method="get" action="/search" class="search-form">
+        <input type="search" name="q" value="{{ query }}" placeholder="Search notes..." class="search-input" autofocus>
+        <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+
+    {% if query %}
+        {% if results %}
+        <p class="search-meta">{{ results | length }} result(s) for "{{ query }}"</p>
+        <ul class="search-results">
+            {% for r in results %}
+            <li><a href="/p/{{ r.path }}">{{ r.title }}</a></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="search-meta">No results for "{{ query }}".</p>
+        {% endif %}
+    {% endif %}
+</article>
+{% endblock %}
