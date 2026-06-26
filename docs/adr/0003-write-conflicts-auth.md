@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-25
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:write-conflicts-auth
+mirror: asobi:miku:decision:write-conflicts-auth
 supersedes: []
 superseded-by:
 relates-to: [ADR-0004]
@@ -26,9 +26,9 @@ prompt (show both versions). Cheap (one read+hash before rename), guards the
 *file*, never involves the indexer. Hash over mtime (mtime is coarse and lies
 across `git`/`rsync`).
 
-**Auth — no user system.** Sedum stays **single-user and login-less**; network
+**Auth — no user system.** Miku stays **single-user and login-less**; network
 protection is the *deployment's* job. Two modes cover every persona:
-`SEDUM_READONLY` (view-only, no write routes) for publishing, and a writable
+`MIKU_READONLY` (view-only, no write routes) for publishing, and a writable
 network deploy behind an authenticating reverse proxy.
 
 ## Why
@@ -41,7 +41,7 @@ simple."
 ## Trade-offs / Rejected
 
 **Loro / CRDTs — considered, deferred.** Loro solves concurrent multi-writer /
-offline merge — a problem Sedum deliberately doesn't have. Its authoritative
+offline merge — a problem Miku deliberately doesn't have. Its authoritative
 state is an operation log that can't be reconstructed from a plain `.md`
 snapshot, so it **conflicts with files-are-truth**. It becomes the right choice
 *only if* we commit to real-time collaborative editing — at which point it earns

@@ -7,7 +7,7 @@ This document outlines the architectural trade-offs of shifting from a **File-Fi
 ## 1. Architectural Options Comparison
 
 ### Option A: The Original File-First Model (Postgres Index)
-- **Concept:** Files on disk (`sedum/` folder) are read and written directly on HTTP requests. Postgres acts solely as a disposable index cache for backlinks, tags, and search.
+- **Concept:** Files on disk (`miku/` folder) are read and written directly on HTTP requests. Postgres acts solely as a disposable index cache for backlinks, tags, and search.
 - **Modification:** Two-side (browser edits and external file edits via Vim/git/VS Code are both supported).
 - **Scale Issues:** Hits Linux file watcher limits; disk I/O on page reads/saves at 100k scale can lag.
 

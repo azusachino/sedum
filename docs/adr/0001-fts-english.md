@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-25
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:fts-english
+mirror: asobi:miku:decision:fts-english
 supersedes: []
 superseded-by:
 relates-to: []
@@ -26,7 +26,7 @@ by `ts_rank`, snippets via `ts_headline('english', …)`.
 
 No extension, no Rust tokenizer, no spike. Postgres stays **vanilla**, so the
 index is disposable/portable and identical across compose and k8s. Content and
-titles are English in practice; the app name (麒麟草) is branding, not a
+titles are English in practice; the app name (ミク) is branding, not a
 content-language requirement. This was the only ADR that needed a spike — it is
 eliminated.
 

@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-26
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:nav-explorer
+mirror: asobi:miku:decision:nav-explorer
 supersedes: []
 superseded-by:
 relates-to: [ADR-0002]

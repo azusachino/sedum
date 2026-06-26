@@ -1,6 +1,6 @@
-# Sedum HTTP API Design Specification
+# Miku HTTP API Design Specification
 
-This document details a robust, structured API design for the Sedum personal wiki. It separates standard HTML multi-page application (MPA) routes from JSON REST endpoints to support interactive UI features (like the `Ctrl-K` palette and `[[wikilink]]` autocomplete).
+This document details a robust, structured API design for the Miku personal wiki. It separates standard HTML multi-page application (MPA) routes from JSON REST endpoints to support interactive UI features (like the `Ctrl-K` palette and `[[wikilink]]` autocomplete).
 
 ---
 
@@ -9,7 +9,7 @@ This document details a robust, structured API design for the Sedum personal wik
 We divide the routing table into three distinct namespaces:
 1. **`/p/*path` (HTML Pages)**: Server-rendered wiki pages (view, edit, list).
 2. **`/api/*` (JSON REST API)**: Asynchronous endpoints for frontend interactions.
-3. **`/static/*` (Assets)**: Static CSS, JS templates, and user-uploaded media from `sedum/assets/`.
+3. **`/static/*` (Assets)**: Static CSS, JS templates, and user-uploaded media from `miku/assets/`.
 
 ---
 
@@ -20,10 +20,10 @@ These routes handle the core Multi-Page Application (MPA) flow, working with Jav
 | Method | Route | Description | Query Parameters / Forms |
 | :--- | :--- | :--- | :--- |
 | **GET** | `/` | Redirects to home page note (configured title, default `Index`). | None |
-| **GET** | `/p/*path` | View a rendered Markdown page. Support nested subfolders (e.g. `/p/work/project-a`). | None |
-| **GET** | `/p/*path/edit` | Render the markdown editor page (textarea). | None |
-| **POST** | `/p/*path` | Save a modified page (atomic write + rename). | Form: `body` (Markdown), `loaded_hash` (optimistic concurrency checking). |
-| **GET** | `/search` | Render the full-text search results page. | `q` (search query) |
+| **GET** | `/p/*path` | View a rendered Markdown page (from `miku/`). Support nested subfolders (e.g. `/p/work/project-a`). | None |
+| **GET** | `/p/*path/edit` | Render the markdown editor page (textarea for `miku/` pages). | None |
+| **POST** | `/p/*path` | Save a modified page (atomic write + rename into `miku/`). | Form: `body` (Markdown), `loaded_hash` (optimistic concurrency checking). |
+| **GET** | `/search` | Render the full-text search results page (searches Miku index). | `q` (search query) |
 | **GET** | `/tags` | View tag cloud or hierarchical tag index. | None |
 | **GET** | `/tags/*tag` | View list of pages containing `#tag` or nested `#tag/subtag`. | None |
 | **GET** | `/backlinks/*path` | Dedicated backlinks and unlinked mentions page. | `page` (pagination offset) |
@@ -59,7 +59,7 @@ These endpoints support the command palette (`Ctrl-K`), autocomplete, and dynami
 
 #### 2. Page Directory Listing
 - **Route:** `GET /api/v1/pages`
-- **Description:** Returns all indexed pages, titles, and paths. Used by frontend to build a local cache for instant search/navigation.
+- **Description:** Returns all indexed pages (from `miku/`), titles, and paths. Used by frontend to build a local cache for instant search/navigation.
 - **Response (200 OK):**
   ```json
   [
@@ -81,7 +81,7 @@ These endpoints support the command palette (`Ctrl-K`), autocomplete, and dynami
   ```json
   {
     "old_path": "work/project-a.md",
-    "new_path": "projects/sedum.md",
+    "new_path": "projects/miku.md",
     "dry_run": false
   }
   ```
@@ -98,13 +98,13 @@ These endpoints support the command palette (`Ctrl-K`), autocomplete, and dynami
   {
     "dry_run": false,
     "files_updated": 9,
-    "message": "Renamed work/project-a.md to projects/sedum.md. Updated 8 references."
+    "message": "Renamed work/project-a.md to projects/miku.md. Updated 8 references."
   }
   ```
 
 #### 2. Soft Delete
 - **Route:** `DELETE /api/v1/page/*path`
-- **Description:** Soft-deletes a page by moving it to `.trash/` with a timestamp suffix.
+- **Description:** Soft-deletes a page (moves from `miku/` to `miku/.trash/`) with a timestamp suffix.
 - **Response (200 OK):**
   ```json
   {
@@ -148,7 +148,7 @@ These endpoints support the command palette (`Ctrl-K`), autocomplete, and dynami
 ### D. Media Assets
 #### 1. Hash-Deduped Upload
 - **Route:** `POST /api/v1/assets`
-- **Description:** Uploads a file (multipart form) into `sedum/assets/`, renaming it to `filename-<short-hash>.ext` if there's a name collision.
+- **Description:** Uploads a file (multipart form) into `miku/assets/`, renaming it to `filename-<short-hash>.ext` if there's a name collision.
 - **Response (201 Created):**
   ```json
   {

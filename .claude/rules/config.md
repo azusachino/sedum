@@ -13,4 +13,4 @@
 
 - Commit secrets or credentials (`.env`, `dev.env` stay out of git history)
 - Remove a config key without checking all consumers
-- Store anything in Postgres that cannot be regenerated from `sedum/**/*.md`
+- Store anything in Postgres that cannot be regenerated from `miku/**/*.md`

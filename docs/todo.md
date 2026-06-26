@@ -1,6 +1,6 @@
 # Todo
 
-Authoritative task state lives in asobi (`sedum:mvp:task-*`). Snapshot:
+Authoritative task state lives in asobi (`miku:mvp:task-*`). Snapshot:
 
 ## In progress
 

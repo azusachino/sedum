@@ -15,7 +15,7 @@ are safe to build against. Proposed or under-discussion decisions stay in
 
   - **Status:** Accepted        <!-- Accepted | Superseded by ADR-NNNN -->
   - **Date:** YYYY-MM-DD
-  - **Mirror:** asobi `sedum:decision:<slug>`
+  - **Mirror:** asobi `miku:decision:<slug>`
   ```
 
 - Body sections: **Decision**, **Why**, **Trade-offs / Rejected**. Keep it the

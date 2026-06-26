@@ -1,18 +1,18 @@
 # Architecture
 
-Sedum is a filesystem-owned personal Markdown wiki: a browser editor over plain
+Miku is a filesystem-owned personal Markdown wiki: a browser editor over plain
 `.md` files, with server-side background indexing for backlinks, tags, and
 full-text search.
 
 ## Core invariant
 
-Markdown files and assets under `sedum/` are the **source of truth**. Postgres
+Markdown files and assets under `miku/` are the **source of truth**. Postgres
 holds only a **disposable index** that is fully rebuildable from
-`sedum/**/*.md`. Deleting the database loses nothing but rebuild time.
+`miku/**/*.md`. Deleting the database loses nothing but rebuild time.
 
 ```
 repo/
-  sedum/            # content root (source of truth)
+  miku/             # content root (source of truth)
     *.md            # pages
     assets/         # images (roadmap: drag/drop upload)
   src/              # Rust server
@@ -24,9 +24,9 @@ repo/
 
 - **HTTP layer (axum):** page render/edit/save routes, search, tags, backlinks,
   static asset serving. **Read-only** against Postgres.
-- **Store:** filesystem read/write of `sedum/*.md`. Atomic save = write temp +
+- **Store:** filesystem read/write of `miku/*.md`. Atomic save = write temp +
   `fsync` + `rename`.
-- **Background indexer:** `notify` watcher on `sedum/`; parses changed pages off
+- **Background indexer:** `notify` watcher on `miku/`; parses changed pages off
   the request path into Postgres. The **sole writer**.
 - **Postgres index:** `pages`, `links`, `tags`, and a `tsvector` FTS column.
 
@@ -35,7 +35,7 @@ repo/
 This is the key design decision that removes save↔index races:
 
 1. `POST /save` writes to a temp file → `fsync` → atomic `rename` into
-   `sedum/<path>.md`. The handler returns immediately and **does not touch the
+   `miku/<path>.md`. The handler returns immediately and **does not touch the
    index**.
 2. The `rename` fires a `notify` event → debounced (~200ms) → the indexer
    reindexes just that page.
@@ -58,7 +58,7 @@ Tables are prefixed `tb_`. The authoritative DDL is
 ```sql
 CREATE TABLE tb_pages (
   id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  path        TEXT NOT NULL UNIQUE,           -- relative to sedum/, e.g. 'sub/Bar.md'
+  path        TEXT NOT NULL UNIQUE,           -- relative to miku/, e.g. 'sub/Bar.md'
   slug        TEXT NOT NULL,                  -- normalized basename for [[ ]] resolution
   title       TEXT NOT NULL,                  -- frontmatter title, else first H1, else filename
   frontmatter JSONB NOT NULL DEFAULT '{}',    -- opaque user properties
@@ -131,25 +131,25 @@ A `SEDUM_READONLY` flag (roadmap) gates the edit/save routes for publishing.
 Rich rendering beyond CommonMark is server-side via comrak, which supports
 wikilinks and Obsidian/GitHub `> [!note]` callouts natively; `![[transclusion]]`
 is our own extractor — never MDX/JSX (see
-`docs/decisions.md` ADR-2 / asobi `sedum:decision:no-mdx`). The `:::` directive
+`docs/decisions.md` ADR-2 / asobi `miku:decision:no-mdx`). The `:::` directive
 syntax was considered and dropped in favor of `[!type]` for compatibility.
 
 See `docs/dataflow.md` for the full set of workflow / dataflow Mermaid diagrams.
 
 ## Link resolution
 
-`[[Name]]` resolves by unique basename across `sedum/`; if multiple match, pick
+`[[Name]]` resolves by unique basename across `miku/`; if multiple match, pick
 deterministically (shortest path). `[[sub/Bar]]` matches an exact relative
 path. Obsidian `[[ ]]` compatible — this replaces a separate importer.
 
 Slug normalization (decided once, lives in the indexer): filename → `slug` via
-Unicode **NFC + case-insensitive** matching, so `麒麟草`, `Foo Bar.md`, and
+Unicode **NFC + case-insensitive** matching, so `ミク`, `Foo Bar.md`, and
 `[[foo bar]]` resolve consistently.
 
 ## Vault layout & scale
 
 Organization comes from **links + tags + frontmatter, not a deep directory
-tree**. `sedum/` is the content root; `sedum/assets/` holds binaries; shallow
+tree**. `miku/` is the content root; `miku/assets/` holds binaries; shallow
 topic folders (`people/`, `projects/`) are allowed as a loose filing cabinet but
 never the primary structure — the graph carries the meaning.
 
@@ -170,7 +170,7 @@ is in the indexer, not the DB:
   insert / `COPY`, commit every N-thousand; build GIN after load), distinct from
   the live single-page reindex transaction.
 - **Large single directory (the 100k-in-one-folder question), resolved as
-  policy — Sedum never auto-shards files.** Opaque hashed subdirs (git-object
+  policy — Miku never auto-shards files.** Opaque hashed subdirs (git-object
   style) would scan fast but break the "readable files you own in any editor"
   thesis, so they are rejected. Resolution:
   - Modern filesystems index directories (ext4 htree, XFS, APFS), so a large dir
@@ -189,7 +189,7 @@ is in the indexer, not the DB:
 ## Out of scope
 
 - **Roadmap:** drag/drop image upload to `assets/`, CodeMirror 6 editor,
-  side-by-side live preview (pairs with CM6), `SEDUM_READONLY` publish flag,
+  side-by-side live preview (pairs with CM6), `MIKU_READONLY` publish flag,
   server-side rich-rendering directives (`:::note`, transclusion)
 - **Rejected:** MDX/JSX — needs a JS runtime, breaks plain-Markdown portability
 - **Dropped:** daily note, Obsidian import

@@ -1,7 +1,7 @@
 # Design Decisions (ADRs)
 
 Resolutions to the open design corners. Each is a decision, not code. Mirrored
-in asobi (`sedum:decision:*`). See `architecture.md` for the prose design.
+in asobi (`miku:decision:*`). See `architecture.md` for the prose design.
 
 > **Status:** ADR-1 … ADR-5 below are **verified** and now canonical in
 > `docs/adr/` (`0001`–`0005`). This file is the **draft/staging** pool for
@@ -14,7 +14,7 @@ in asobi (`sedum:decision:*`). See `architecture.md` for the prose design.
 **Decision.** Use Postgres' built-in **`english`** FTS config:
 `to_tsvector('english', title ‖ body)` with **title weighted A, body B**, ranked
 by `ts_rank`, snippets via `ts_headline('english', …)`. Content and titles are
-English in practice; the app name (麒麟草) is branding, not a content-language
+English in practice; the app name (ミク) is branding, not a content-language
 requirement.
 
 **Why this is now trivial.** No extension, no Rust tokenizer, no spike. Postgres
@@ -36,7 +36,7 @@ alerts** (`> [!NOTE]` callouts). That keeps custom grammar work to two
 extractors — `#tags` and `![[embed]]` — that the renderer does not provide
 natively. Render speed is acceptable for a personal wiki, and rendered HTML can
 be cached by content hash later if needed. No MDX/JSX (rejected — JS runtime,
-breaks portability; `sedum:decision:no-mdx`).
+breaks portability; `miku:decision:no-mdx`).
 
 **Editor vs renderer — CM6 is a separate axis.** CodeMirror 6 is a *client-side
 editor*; it does **not** render the read view or feed the index — the server
@@ -55,6 +55,9 @@ space. Stored whole (`area/health`); ancestor grouping (`area`) is a
 via comrak alerts); `:::` directive syntax dropped; `architecture.md` updated.
 **Transclusion** `![[Page]]` / `![[image.png]]`: custom, server-side, with a
 recursion/cycle depth limit (roadmap render; grammar fixed now).
+
+**Latest decision wins.** If a later ADR supersedes an earlier one, the later
+ADR is the canonical decision. See `docs/adr/` for verified, timestamped decisions.
 
 ---
 
@@ -80,9 +83,9 @@ Markdown files you own") or we keep two sources of truth and must pick a winner.
 we commit to real-time collaborative editing, at which point it reshapes the
 core invariant and earns its own ADR. Not a single-user need.
 
-**Auth — no user system.** Sedum stays **single-user and login-less**; network
+**Auth — no user system.** Miku stays **single-user and login-less**; network
 protection is the *deployment's* job. Two modes cover every persona:
-- **`SEDUM_READONLY`** (roadmap flag) — serves view-only, no edit/save routes.
+- **`MIKU_READONLY`** (roadmap flag) — serves view-only, no edit/save routes.
   For publishing; no auth needed because nothing writes.
 - **Writable network deploy** — put Sedum behind an **authenticating reverse
   proxy** (oauth2-proxy / basic auth / Tailscale). Documented, not built.
@@ -109,16 +112,16 @@ confirmation before committing.
 fire fs events → normal reindex. No handler indexes directly.
 
 **Delete = soft-delete with a 7-day archive.** Deleting never `rm`s immediately.
-The file is **moved to `sedum/.trash/<original-path>@<deleted-at>.md`**, and
+The file is **moved to `miku/.trash/<original-path>@<deleted-at>.md`**, and
 `.trash/` is **excluded from the watcher and index** — so the page vanishes from
 search/backlinks at once (its row is removed; inbound links go dangling via
 `ON DELETE SET NULL`), while the bytes survive. A periodic GC purges trash
-entries older than **`SEDUM_TRASH_TTL` (default 7 days)**. **Restore** = move the
+entries older than **`MIKU_TRASH_TTL` (default 7 days)**. **Restore** = move the
 file back → `notify` → reindex. Trash lives *inside* the content root (so it
 travels with backups and the k8s PVC) but is ignore-listed, keeping the live
 index pure. UX: a "N backlinks will dangle" warning before deleting.
 
-**Assets.** Live in `sedum/assets/`. Upload (roadmap): `POST /assets` writes
+**Assets.** Live in `miku/assets/`. Upload (roadmap): `POST /assets` writes
 atomically, keeping the original name but **deduping by content hash**
 (`name-<short-hash>.ext`) to avoid collisions. `![[image.png]]` resolves by
 basename in `assets/`; served with caching headers.
@@ -165,7 +168,7 @@ needed for v0.
 **Rejected.** (1) A client-side JS tree widget — reintroduces the bundler/Electron
 tax ADR-2 and `product.md` exist to avoid. (2) A `tb_folders` table — folders
 are derivable from `path`; materializing them duplicates truth and invites
-drift. Mirrored in asobi `sedum:decision:nav-explorer`.
+drift. Mirrored in asobi `miku:decision:nav-explorer`.
 
 ---
 
@@ -191,7 +194,7 @@ limit). The watcher's only irreplaceable job is **live pickup of external
 edits** — exactly the files-are-truth payoff.
 
 **Rejected.** RocksDB as a durable work-queue / primary store (former
-`dataflow_v2.md`) — solves a problem sedum doesn't have, adds a second store,
+`dataflow_v2.md`) — solves a problem Miku doesn't have, adds a second store,
 and risks the core invariant. See `docs/dataflow_v3.md` (supersedes v2).
 Candidate verified file: `docs/adr/0006-watcher-at-scale.md`.
 

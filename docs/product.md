@@ -1,4 +1,4 @@
-# Sedum — Product & Positioning
+# Miku — Product & Positioning
 
 > Design rework written *before* implementation. Personas drive scope; scope
 > drives the build. See `architecture.md` for the technical contract.
@@ -9,13 +9,13 @@
 Knowledge scattered across Confluence, Notion, Slack DMs, and a `~/notes`
 folder. Nothing links. During an incident she follows `[[postgres-failover]]`
 backlinks to the runbook, the postmortem, and the capacity note, fixes the doc,
-and commits all of `sedum/` to a private git repo — versioned, diffable notes.
+and commits all of `miku/` to a private git repo — versioned, diffable notes.
 - **Leans on:** backlinks, FTS, plain `.md` on disk (git/rg/sed still work), no lock-in.
 - **Before:** real knowledge, unsearchable across five silos; lost on every tool migration.
 
 ### 2. Tanaka-san — Records & Compliance Officer (municipal office)
 Cloud SaaS is a data-sovereignty and procurement problem. Records must live on
-managed, auditable storage and outlive any vendor. Runs Sedum on-prem; the files
+managed, auditable storage and outlive any vendor. Runs Miku on-prem; the files
 are the record, Postgres is explicitly disposable. Audit is `git log` over the
 notes directory.
 - **Leans on:** filesystem-as-truth, self-hosted, no proprietary format, rebuildable index.
@@ -65,15 +65,23 @@ can't read without the vendor. When the subscription lapses, your second brain
 is held hostage — and your real tools (git, grep, your editor, your backup)
 can't touch the data.
 
-**Why Sedum — your wiki is just Markdown files; Sedum is the lens, not the cage:**
-- **You own the files.** Plain `.md` in one folder. Delete Sedum tomorrow; your knowledge is untouched.
+**Why Miku — your wiki is just Markdown files; Miku is the lens, not the cage:**
+- **You own the files.** Plain `.md` in one folder. Delete Miku tomorrow; your knowledge is untouched.
 - **Connections, found for you.** `[[links]]` → backlinks, tags, FTS built in the background. The valuable graph, without hand-maintenance.
-- **The database is disposable, on purpose.** Postgres is a cache; nuke it and Sedum rebuilds from files. Nothing important lives anywhere but your disk.
+- **The database is disposable, on purpose.** Postgres is a cache; nuke it and Miku rebuilds from files. Nothing important lives anywhere but your disk.
 - **Self-host or run local.** No account, no telemetry, no cloud.
 - **It gets out of your way.** Browser editor over a textarea. No bundler, no app to learn, no migration the day you need it most.
 
 **One line:** *Obsidian's linking and a real search engine — but the files are
 unarguably yours, and the index is something you can throw away.*
+
+## Product name — Miku
+
+The project is named **Miku** (初音ミク) — Hatsune Miku, the iconic Vocaloid
+voice bank and cultural figure in music/tech. Like the Vocaloid engine itself,
+Miku lets you compose and shape knowledge without vendor lock-in: the *content*
+(Markdown files) is the source of truth, and Miku is the tool layer that renders,
+links, and searches — ephemeral and replaceable.
 
 ## What we learn from Notion and Obsidian
 
@@ -111,7 +119,7 @@ unarguably yours, and the index is something you can throw away.*
 ### The synthesis
 Notion teaches **discoverability** (command palette, never-blank states, inline
 context). Obsidian teaches **ownership** (files as truth, frictionless
-`[[linking]]`, backlinks as the daily payoff). Sedum's wedge is taking
+`[[linking]]`, backlinks as the daily payoff). Miku's wedge is taking
 Obsidian's ownership story and moving the *indexing* server-side — so linking,
 backlinks, tags, and search are computed for you in the background instead of by
 a pile of client plugins, while the files stay plainly, provably yours.
@@ -132,10 +140,10 @@ and the groundwork for a future Dataview-lite query, with no hardcoded schema.
 
 ### Rendering: "no JS bundler / server-first" ≠ "zero JS"
 
-> **Superseded for the MVP by ADR-7** (`docs/adr/0007-frontend-rendering.md`):
-> highlighting uses **client-side Prism.js** for the MVP; **`syntect` is
+> **Latest decision: ADR-7** (`docs/adr/0007-frontend-rendering.md`) — see there.
+> Highlights uses **client-side Prism.js** for the MVP; **`syntect` is
 > deferred** as a post-MVP swap. The server-side stance below is the *target*,
-> not the MVP. Latest decision wins.
+> not the MVP.
 
 - **Code highlighting → server-side `syntect`.** Highlight at render time into
   classed spans, colored by CSS; themeable via the Themes mechanism. No client

@@ -17,14 +17,14 @@ Here is how popular developer tools handle this:
 | **Watchman** | Native C / OS APIs | 1. Heavy sysctl warning on startup.<br/>2. High-performance caching & query interface.<br/>3. Ignores VCS folders. | **Pros:** Monorepo scale performance.<br/>**Cons:** Heavy daemon dependency; too complex for a personal wiki. |
 | **SilverBullet** | `Deno.watchFs` | Restarts/fails to watch, requiring manual intervention or raising limits. | **Pros:** Simple implementation.<br/>**Cons:** Brittle at scale. |
 
-### Sedum Strategy: Dual-Path Watcher (Notify + Smart Polling Fallback)
-For Sedum, we will implement a robust two-layer strategy:
+### Miku Strategy: Dual-Path Watcher (Notify + Smart Polling Fallback)
+For Miku, we will implement a robust two-layer strategy:
 
 1. **Strict Target Exclusion:**
    - Always exclude `.git/`, `.trash/`, and `assets/` from the recursive watch. This prevents system files and raw binaries from consuming watch descriptors.
 2. **Auto-Detection & Sysctl Onboarding:**
    - On startup, check `/proc/sys/fs/inotify/max_user_watches` (on Linux).
-   - If the folder count in `sedum/` exceeds $80\%$ of this limit, print a prominent warning log indicating how to increase the limit permanently:
+   - If the folder count in `miku/` exceeds $80\%$ of this limit, print a prominent warning log indicating how to increase the limit permanently:
      ```bash
      echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
      ```

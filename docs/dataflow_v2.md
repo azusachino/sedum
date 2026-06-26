@@ -1,6 +1,6 @@
 # Dataflow & Workflows (v2 — RocksDB queue for 100k-file scale)
 
-This revises the v1 dataflow (`docs/dataflow.md`) to remove sedum's dependency
+This revises the v1 dataflow (`docs/dataflow.md`) to remove Miku's dependency
 on a recursive `notify`/inotify watch, which does not survive the 100k-file
 scale target (`architecture.md` → *Vault layout & scale*). It introduces a
 **RocksDB durable work-queue + read cache** while keeping the core invariant
@@ -26,10 +26,10 @@ durably, so:
 - External edits (git pull, another editor) are caught by a **periodic
   reconcile** scan rather than a live per-file watch.
 
-**Core invariant preserved.** Markdown files under `sedum/` remain the source of
+**Core invariant preserved.** Markdown files under `miku/` remain the source of
 truth — saves still atomic-write the file (temp + `fsync` + `rename`) *before*
 enqueuing. **RocksDB and Postgres are both disposable caches**, fully
-rebuildable from `sedum/**/*.md`; deleting either loses nothing but rebuild
+rebuildable from `miku/**/*.md`; deleting either loses nothing but rebuild
 time. RocksDB holds two column families: a durable `queue` CF (pending index
 work) and an optional `body` read-cache CF (`slug → body + content-hash + mtime`)
 that speeds reads and cheap change-detection.
@@ -42,7 +42,7 @@ that speeds reads and cheap change-detection.
 flowchart LR
   Browser["Browser<br/>(rendered HTML + textarea)"]
 
-  subgraph Server["sedum — Rust single binary"]
+  subgraph Server["Miku — Rust single binary"]
     HTTP["axum HTTP layer<br/>(read-only on Postgres)"]
     Store["Store<br/>(atomic file I/O)"]
     Rocks["RocksDB<br/>(durable dirty queue<br/>+ body read cache)"]
@@ -50,7 +50,7 @@ flowchart LR
     Reconcile["Reconcile task<br/>(periodic / manual)"]
   end
 
-  FS[("sedum/ Markdown<br/>source of truth")]
+  FS[("miku/ Markdown<br/>source of truth")]
   PG[("Postgres<br/>disposable index")]
 
   Browser -->|"GET view / edit"| HTTP
@@ -103,7 +103,7 @@ is also drained on startup, so nothing is lost across a crash.
 sequenceDiagram
   participant B as Browser
   participant H as axum handler
-  participant FS as sedum/*.md
+  participant FS as miku/*.md
   participant R as RocksDB (queue + cache)
   participant I as Indexer
   participant PG as Postgres
@@ -154,7 +154,7 @@ enqueues anything whose content changed. mtime is a cheap pre-filter only;
 
 ```mermaid
 flowchart TD
-  A["reconcile (startup / periodic / manual)"] --> B["scan sedum/**/*.md"]
+  A["reconcile (startup / periodic / manual)"] --> B["scan miku/**/*.md"]
   B --> C{"mtime changed?"}
   C -- no --> E["skip"]
   C -- yes --> D{"content-hash ≠ cached hash?"}

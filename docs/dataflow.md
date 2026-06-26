@@ -12,20 +12,20 @@ only **read** Postgres; the background indexer is the **only** writer.
 flowchart LR
   Browser["Browser<br/>(rendered HTML + textarea)"]
 
-  subgraph Server["sedum — Rust single binary"]
+  subgraph Server["Miku — Rust single binary"]
     HTTP["axum HTTP layer<br/>(read-only on Postgres)"]
     Store["Store<br/>(atomic file I/O)"]
     Indexer["Background indexer<br/>(sole Postgres writer)"]
   end
 
-  FS[("sedum/ Markdown<br/>source of truth")]
+  FS[("miku/ Markdown<br/>source of truth")]
   PG[("Postgres<br/>disposable index")]
 
   Browser -->|"GET view / edit"| HTTP
   Browser -->|"POST save"| HTTP
   HTTP -->|"read page text"| Store
   HTTP -->|"queries:<br/>backlinks / tags / FTS"| PG
-  HTTP -->|"write temp + rename"| Store
+  HTTP -->|"atomic save:<br/>write temp + rename"| Store
   Store --> FS
   FS -->|"fs events (notify)"| Indexer
   Indexer -->|"reindex tx"| PG
@@ -60,14 +60,14 @@ no save↔index race.
 sequenceDiagram
   participant B as Browser
   participant H as axum handler
-  participant FS as sedum/*.md
+  participant FS as miku/*.md
   participant W as notify watcher
   participant I as Indexer
   participant PG as Postgres
 
   B->>H: POST /page/Foo (markdown body)
-  H->>FS: write Foo.md.tmp + fsync
-  H->>FS: rename to Foo.md (atomic)
+  H->>FS: write Foo.md.tmp + fsync (miku/)
+  H->>FS: rename to Foo.md (atomic, miku/)
   H-->>B: 303 redirect to /page/Foo (view)
   Note over H,PG: handler does NOT touch the index
   FS-->>W: modify event (Foo.md)
@@ -83,7 +83,7 @@ One page reindex is a single Postgres transaction.
 
 ```mermaid
 flowchart TD
-  S["reindex(path)"] --> P["parse page:<br/>title, [[links]], #tags, body"]
+  S["reindex(miku/ path)"] --> P["parse page:<br/>title, [[links]], #tags, body"]
   P --> BEGIN["BEGIN"]
   BEGIN --> U["upsert pages row -> id<br/>set body_tsv, mtime"]
   U --> DL["delete links where src_id=id<br/>insert fresh edges"]
@@ -100,7 +100,7 @@ mtime-based reconcile before the live watcher takes over.
 
 ```mermaid
 flowchart TD
-  A["startup"] --> B["scan sedum/**/*.md"]
+  A["startup"] --> B["scan miku/**/*.md"]
   B --> C{"file mtime > pages.mtime?"}
   C -- "new / changed" --> D["reindex(file)"]
   C -- unchanged --> E["skip"]

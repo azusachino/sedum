@@ -1,4 +1,4 @@
-# Sedum Frontend Architecture & Communication Plan
+# Miku Frontend Architecture & Communication Plan
 
 This document details how the frontend communicates with the backend in a **zero-bundler, server-rendered** environment, and how it integrates **Alpine.js**, **Prism.js**, and **Mermaid.js**.
 
@@ -25,7 +25,7 @@ We run **Prism.js** in the browser to highlight code blocks. To ensure formattin
   <!-- Server-rendered Markdown HTML -->
   <pre><code class="language-rust">
     fn main() {
-        println!("Hello Sedum!");
+        println!("Hello Miku!");
     }
   </code></pre>
 </div>
@@ -43,7 +43,7 @@ We run **Prism.js** in the browser to highlight code blocks. To ensure formattin
 During background markdown parsing, the indexer checks if the page contains a ` ```mermaid ` block. If it does, it sets `has_mermaid = true` in the database (`tb_pages`).
 
 ### Step B: Conditional Server Injection
-In the server template (`src/templates/`), we conditionally inject the script tags only if the page metadata indicates `has_mermaid` is true:
+In the Miku server template (`src/templates/`), we conditionally inject the script tags only if the page metadata indicates `has_mermaid` is true:
 
 ```html
 <!-- In page_view.html template -->
@@ -52,7 +52,7 @@ In the server template (`src/templates/`), we conditionally inject the script ta
   <script src="/static/js/vendor/mermaid.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+      mermaid.initialize({ startOnLoad: true, theme: 'default' });
     });
   </script>
 {% endif %}
