@@ -1,6 +1,6 @@
-# sedum
+# miku
 
-Sedum (セダム) 麒麟草 — a filesystem-owned personal Markdown wiki with a browser
+Miku (ミク) — a filesystem-owned personal Markdown wiki with a browser
 editor and server-side background indexing (backlinks, tags, full-text search).
 
 Markdown files under `sedum/` are the source of truth; Postgres holds only a

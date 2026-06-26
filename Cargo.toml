@@ -1,11 +1,14 @@
 [package]
-name = "sedum"
+name = "miku"
 version = "0.0.1"
 authors = ["azusachino <azusachino@duck.com>"]
 edition = "2021"
+description = "A filesystem-owned personal Markdown wiki with browser editing and background indexing for backlinks, tags, and full-text search."
 readme = "README.md"
-license-file = "LICENSE"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/azusachino/sedum"
+keywords = ["markdown", "wiki", "notes", "backlinks", "fulltext"]
+categories = ["text-processing", "web-programming"]
 
 [dependencies]
 anyhow = "1"

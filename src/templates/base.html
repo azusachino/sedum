@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Sedum{% endblock %}</title>
+    <title>{% block title %}Miku{% endblock %}</title>
     
     <!-- Inline Pre-Paint Script to prevent FOUC -->
     <script>
         (function() {
-            const palette = localStorage.getItem('sedum-palette') || 'default';
-            const mode = localStorage.getItem('sedum-mode') || 'system';
+            const palette = localStorage.getItem('miku-palette') || 'default';
+            const mode = localStorage.getItem('miku-mode') || 'system';
             document.documentElement.setAttribute('data-palette', palette);
             
             let resolvedMode = mode;
@@ -52,7 +52,7 @@
             <div>
                 <div class="brand">
                     <div class="brand-icon"></div>
-                    <span>Sedum</span>
+                    <span>Miku</span>
                 </div>
                 
                 <nav class="nav-links">
@@ -95,7 +95,7 @@
                     </div>
                 </div>
                 <div class="footer-text">
-                    <span>Sedum Wiki v0.1.0</span>
+                    <span>Miku Wiki v0.1.0</span>
                 </div>
             </div>
         </aside>
@@ -112,18 +112,18 @@
     <script>
         document.addEventListener('alpine:init', () => {
             Alpine.data('themeSwitcher', () => ({
-                palette: localStorage.getItem('sedum-palette') || 'default',
-                mode: localStorage.getItem('sedum-mode') || 'system',
+                palette: localStorage.getItem('miku-palette') || 'default',
+                mode: localStorage.getItem('miku-mode') || 'system',
                 
                 init() {
                     this.$watch('palette', val => {
-                        localStorage.setItem('sedum-palette', val);
+                        localStorage.setItem('miku-palette', val);
                         document.documentElement.setAttribute('data-palette', val);
                         this.updatePrismTheme();
                     });
                     
                     this.$watch('mode', val => {
-                        localStorage.setItem('sedum-mode', val);
+                        localStorage.setItem('miku-mode', val);
                         this.resolveAndApplyMode();
                     });
 

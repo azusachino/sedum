@@ -6,8 +6,8 @@ use axum::{
     routing::get,
     Form, Router,
 };
+use miku::markdown::{extract_title, parse_frontmatter, render_html};
 use minijinja::{context, Environment};
-use sedum::markdown::{extract_title, parse_frontmatter, render_html};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashSet;
@@ -73,12 +73,12 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new("info,sedum=debug,tower_http=debug")
+                tracing_subscriber::EnvFilter::new("info,miku=debug,tower_http=debug")
             }),
         )
         .init();
 
-    info!("Starting Sedum Server...");
+    info!("Starting Miku Server...");
 
     // 2. Load DATABASE_URL from environment variable
     let database_url =
@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     };
 
     // 6. Initialize background indexer
-    let _indexer = sedum::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("sedum"))
+    let _indexer = miku::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("sedum"))
         .context("Failed to initialize background indexer")?;
 
     // 7. Build Router & Configure axum routes
