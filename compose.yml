@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    container_name: miku-postgres
+    environment:
+      POSTGRES_USER: miku
+      POSTGRES_PASSWORD: miku
+      POSTGRES_DB: miku
+    # No host port mapping: the miku service reaches Postgres over the compose
+    # network (postgres:5432) and runs its own embedded migrations. Expose a
+    # host port ad hoc (e.g. 127.0.0.1:5433:5432) only when you need psql.
+    volumes:
+      # PG18+ images expect the mount at /var/lib/postgresql (data lands in a
+      # major-version subdir), not the legacy /var/lib/postgresql/data.
+      - miku-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U miku -d miku"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  miku:
+    build: .
+    container_name: miku-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Host is the compose service name, not localhost.
+      DATABASE_URL: postgres://miku:miku@postgres:5432/miku
+    ports:
+      - "0.0.0.0:3000:3000"
+    volumes:
+      # Markdown is the source of truth; bind-mount so browser edits persist to
+      # the host and the background watcher reindexes them.
+      - ./miku:/app/miku
+
+volumes:
+  miku-pgdata:
