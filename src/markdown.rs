@@ -258,8 +258,10 @@ fn render_text_inlines(text: &str, resolved: &dyn Fn(&str) -> bool, allow_tags: 
             {
                 continue;
             }
-            // The match includes a leading delimiter char before `#`; keep it.
-            let delim = &text[whole.start()..tag.start()];
+            // Match 0 is `<delim>#<tag>`; keep the delimiter but drop the `#`
+            // (tag_html re-adds it) so a single `#docs` doesn't render as `##docs`.
+            // The `#` is the single ASCII byte immediately before the capture.
+            let delim = &text[whole.start()..tag.start() - 1];
             hits.push(Hit {
                 start: whole.start(),
                 end: whole.end(),
@@ -400,6 +402,30 @@ mod tests {
         let html = render_html("Tagged with #feature and #guide here.", &|_| true);
         assert!(html.contains(r#"<a href="/tags/feature" class="tag-inline">#feature</a>"#));
         assert!(html.contains(r#"<a href="/tags/guide" class="tag-inline">#guide</a>"#));
+    }
+
+    #[test]
+    fn test_render_single_hash_no_double() {
+        // A single `#docs` must not render the delimiter `#` plus the pill's `#`
+        // (which read as `##docs`). Assert the exact surrounding text.
+        let html = render_html("end #docs", &|_| true);
+        assert!(html.contains(r#"end <a href="/tags/docs" class="tag-inline">#docs</a>"#));
+        assert!(!html.contains("##docs"));
+        assert!(!html.contains(r#"#<a href="/tags/docs""#));
+    }
+
+    #[test]
+    fn test_render_double_hash_not_linkified() {
+        // `##docs` is not a valid tag and must stay literal.
+        let html = render_html("see ##docs here", &|_| true);
+        assert!(!html.contains("tag-inline"));
+        assert!(html.contains("##docs"));
+    }
+
+    #[test]
+    fn test_render_tag_keeps_open_paren_delim() {
+        let html = render_html("(#tag)", &|_| true);
+        assert!(html.contains(r#"(<a href="/tags/tag" class="tag-inline">#tag</a>)"#));
     }
 
     #[test]
