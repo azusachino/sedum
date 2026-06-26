@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     };
 
     // 6. Initialize background indexer
-    let _indexer = miku::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("sedum"))
+    let _indexer = miku::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("miku"))
         .context("Failed to initialize background indexer")?;
 
     // 7. Build Router & Configure axum routes
@@ -132,7 +132,7 @@ fn app(state: AppState) -> Router {
         .route("/tags/{tag}", get(tag_filter))
         .route("/p/{*path}", get(page_handler).post(page_save))
         .nest_service("/static", ServeDir::new("static"))
-        .nest_service("/assets", ServeDir::new("sedum/assets"))
+        .nest_service("/assets", ServeDir::new("miku/assets"))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -142,12 +142,12 @@ async fn redirect_to_index() -> impl IntoResponse {
     Redirect::temporary("/p/Index")
 }
 
-// Helper to get safe path under sedum/ and check for directory traversal
+// Helper to get safe path under miku/ and check for directory traversal
 fn safe_file_path(path: &str) -> Result<PathBuf, AppError> {
     if path.contains("..") || path.starts_with('/') {
         return Err(anyhow::anyhow!("Invalid path: path traversal detected").into());
     }
-    Ok(StdPath::new("sedum").join(format!("{path}.md")))
+    Ok(StdPath::new("miku").join(format!("{path}.md")))
 }
 
 // Helper to compute SHA-256 hash of content
@@ -469,7 +469,7 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("Test Title"));
-        assert!(rendered.contains("sedum/TestPath.md"));
+        assert!(rendered.contains("miku/TestPath.md"));
         assert!(!rendered.contains("mermaid.min.js"));
     }
 

@@ -1,14 +1,14 @@
--- Sedum disposable index schema.
--- Source of truth is sedum/**/*.md; every table here is rebuildable from files.
+-- Miku disposable index schema.
+-- Source of truth is miku/**/*.md; every table here is rebuildable from files.
 -- Single-writer: only the background indexer writes; HTTP handlers read.
 
 -- Fuzzy title/slug/alias matching for [[ ]] autocomplete and the Ctrl-K palette.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- One row per Markdown file under sedum/.
+-- One row per Markdown file under miku/.
 CREATE TABLE tb_pages (
   id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  path        TEXT NOT NULL UNIQUE,            -- relative to sedum/, e.g. 'sub/Bar.md'
+  path        TEXT NOT NULL UNIQUE,            -- relative to miku/, e.g. 'sub/Bar.md'
   slug        TEXT NOT NULL,                   -- normalized basename for [[ ]] resolution
   title       TEXT NOT NULL,                   -- frontmatter title, else first H1, else filename
   frontmatter JSONB NOT NULL DEFAULT '{}',     -- opaque user properties (interpreted keys fan out below)
@@ -25,7 +25,7 @@ CREATE INDEX idx_pages_title_trgm  ON tb_pages USING GIN (title gin_trgm_ops);
 
 -- Directed link/embed edges; one row per normalized target per source page.
 -- target_id points at tb_pages only. It stays NULL for dangling page links and
--- asset links, whose bytes live under sedum/assets/.
+-- asset links, whose bytes live under miku/assets/.
 CREATE TABLE tb_links (
   src_id      BIGINT NOT NULL REFERENCES tb_pages(id) ON DELETE CASCADE,
   kind        TEXT   NOT NULL CHECK (kind IN ('page', 'asset')),
