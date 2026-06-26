@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}
+Sedum - #{{ tag }}
+{% endblock %}
+
+{% block content %}
+<article>
+    <h1>#{{ tag }}</h1>
+
+    {% if pages %}
+    <ul class="page-list">
+        {% for p in pages %}
+        <li><a href="/p/{{ p.path }}">{{ p.title }}</a></li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p style="color: var(--text-muted);">No pages with this tag.</p>
+    {% endif %}
+</article>
+{% endblock %}

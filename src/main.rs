@@ -26,6 +26,18 @@ struct Backlink {
     title: String,
 }
 
+#[derive(serde::Serialize)]
+struct TagCount {
+    tag: String,
+    count: i64,
+}
+
+#[derive(serde::Serialize)]
+struct PageRef {
+    path: String,
+    title: String,
+}
+
 #[derive(Clone)]
 struct AppState {
     db: sqlx::PgPool,
@@ -115,6 +127,8 @@ async fn main() -> Result<()> {
 fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(redirect_to_index))
+        .route("/tags", get(tags_index))
+        .route("/tags/{tag}", get(tag_filter))
         .route("/p/{*path}", get(page_handler).post(page_save))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/assets", ServeDir::new("sedum/assets"))
@@ -324,6 +338,64 @@ async fn page_save(
 
     info!("Saved page path={} successfully", path);
     Ok(Redirect::to(&format!("/p/{path}")).into_response())
+}
+
+// Tags index handler: list all tags with their counts
+async fn tags_index(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+    info!("Rendering tags index");
+    let template = state.templates.get_template("tags.html")?;
+
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT tag, COUNT(*) AS cnt FROM tb_tags GROUP BY tag ORDER BY cnt DESC, tag",
+    )
+    .fetch_all(&state.db)
+    .await
+    .context("Failed to load tags")?;
+
+    let tags: Vec<TagCount> = rows
+        .into_iter()
+        .map(|(tag, count)| TagCount { tag, count })
+        .collect();
+
+    let rendered = template.render(context! {
+        tags => tags,
+    })?;
+
+    Ok(Html(rendered).into_response())
+}
+
+// Tag filter handler: list all pages with a specific tag
+async fn tag_filter(
+    Path(tag): Path<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    info!("Rendering tag filter for tag: {}", tag);
+    let template = state.templates.get_template("tag.html")?;
+
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT p.path, p.title
+         FROM tb_tags t JOIN tb_pages p ON p.id = t.page_id
+         WHERE t.tag = $1 ORDER BY p.title",
+    )
+    .bind(&tag)
+    .fetch_all(&state.db)
+    .await
+    .context("Failed to load pages for tag")?;
+
+    let pages: Vec<PageRef> = rows
+        .into_iter()
+        .map(|(path, title)| PageRef {
+            path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
+            title,
+        })
+        .collect();
+
+    let rendered = template.render(context! {
+        tag => tag,
+        pages => pages,
+    })?;
+
+    Ok(Html(rendered).into_response())
 }
 
 #[cfg(test)]
