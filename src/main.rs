@@ -20,6 +20,12 @@ use std::sync::Arc;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
 
+#[derive(serde::Serialize)]
+struct Backlink {
+    path: String,
+    title: String,
+}
+
 #[derive(Clone)]
 struct AppState {
     db: sqlx::PgPool,
@@ -162,6 +168,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
             content_html => "",
             loaded_hash => "",
             has_mermaid => false,
+            backlinks => Vec::<Backlink>::new(),
         })?;
         return Ok(Html(rendered).into_response());
     }
@@ -186,6 +193,37 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     // Check has_mermaid
     let has_mermaid = raw_content.contains("```mermaid");
 
+    // Load backlinks: pages that link TO this page
+    let page_id_result: Option<(i64,)> = sqlx::query_as("SELECT id FROM tb_pages WHERE path = $1")
+        .bind(format!("{path}.md"))
+        .fetch_optional(&state.db)
+        .await
+        .context("Failed to query page id for backlinks")?;
+
+    let backlinks = if let Some((page_id,)) = page_id_result {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT DISTINCT src.path, src.title
+             FROM tb_links l
+             JOIN tb_pages src ON src.id = l.src_id
+             WHERE l.target_id = $1 AND l.kind = 'page'
+             ORDER BY src.title
+             LIMIT 50",
+        )
+        .bind(page_id)
+        .fetch_all(&state.db)
+        .await
+        .context("Failed to load backlinks")?;
+
+        rows.into_iter()
+            .map(|(p, t)| Backlink {
+                path: p.strip_suffix(".md").unwrap_or(&p).to_string(),
+                title: t,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let rendered = template.render(context! {
         title => title,
         path => path,
@@ -193,6 +231,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         content_html => content_html,
         loaded_hash => loaded_hash,
         has_mermaid => has_mermaid,
+        backlinks => backlinks,
     })?;
 
     Ok(Html(rendered).into_response())

@@ -33,5 +33,16 @@ Sedum - {{ path }}
             </div>
         {% endif %}
     </div>
+
+    {% if backlinks %}
+    <aside class="backlinks">
+        <h2 class="backlinks-title">Linked from</h2>
+        <ul class="backlinks-list">
+            {% for bl in backlinks %}
+            <li><a href="/p/{{ bl.path }}">{{ bl.title }}</a></li>
+            {% endfor %}
+        </ul>
+    </aside>
+    {% endif %}
 </article>
 {% endblock %}
