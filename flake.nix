@@ -1,5 +1,5 @@
 {
-  description = "sedum — filesystem-owned personal Markdown wiki";
+  description = "miku — filesystem-owned personal Markdown wiki";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

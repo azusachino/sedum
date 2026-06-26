@@ -6,7 +6,7 @@ edition = "2021"
 description = "A filesystem-owned personal Markdown wiki with browser editing and background indexing for backlinks, tags, and full-text search."
 readme = "README.md"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/azusachino/sedum"
+repository = "https://github.com/azusachino/miku"
 keywords = ["markdown", "wiki", "notes", "backlinks", "fulltext"]
 categories = ["text-processing", "web-programming"]
 # Publish only the runnable crate; keep repo-internal docs/config/CI out of the
@@ -33,7 +33,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 minijinja = { version = "2", features = ["loader"] }
 
-# postgres index cache (disposable; source of truth is sedum/**/*.md)
+# postgres index cache (disposable; source of truth is miku/**/*.md)
 sqlx = { version = "0.8", features = [
   "postgres",
   "runtime-tokio-rustls",
