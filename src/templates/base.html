@@ -644,6 +644,15 @@
                 attributes: true,
                 attributeFilter: ['data-theme']
             });
+
+            document.addEventListener('htmx:afterSwap', function(evt) {
+                if (window.Prism) {
+                    Prism.highlightAllUnder(evt.detail.target);
+                }
+                if (window.mermaid && evt.detail.target.querySelector('.mermaid')) {
+                    mermaid.init(undefined, evt.detail.target.querySelectorAll('.mermaid'));
+                }
+            });
         })();
     </script>
 
