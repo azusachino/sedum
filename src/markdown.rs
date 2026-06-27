@@ -519,6 +519,15 @@ mod tests {
     }
 
     #[test]
+    fn test_render_table() {
+        let markdown = "| Col 1 | Col 2 |\n|---|---|\n| Val 1 | Val 2 |";
+        let html = render_html(markdown, &|_| true);
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<th>Col 1</th>"));
+        assert!(html.contains("<td>Val 1</td>"));
+    }
+
+    #[test]
     fn test_render_html_with_toc_matches_heading_ids() {
         let (html, toc) = render_html_with_toc(
             "# Intro\n\n## Hello **World**\n\n### Hello `World`\n\n## Hello World\n",

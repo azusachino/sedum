@@ -924,6 +924,63 @@ mod tests {
     }
 
     #[test]
+    fn test_page_template_has_collapsible_cards_and_order() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+        let template = templates_env
+            .get_template("page.html")
+            .expect("Failed to get page.html template");
+
+        let frontmatter = serde_json::json!({
+            "status": "draft",
+        });
+
+        let toc_headings = vec![Heading {
+            level: 2,
+            text: "Section A".to_string(),
+            id: "section-a".to_string(),
+        }];
+
+        let rendered = template
+            .render(context! {
+                title => "Test Title",
+                path => "Notes/Daily",
+                exists => true,
+                content_html => "<p>Test</p>",
+                loaded_hash => "abc",
+                has_mermaid => false,
+                backlinks => Vec::<Backlink>::new(),
+                toc => toc_headings,
+                word_count => 10usize,
+                backlink_count => 1usize,
+                updated => "2026-06-27 12:00",
+                frontmatter => frontmatter,
+                breadcrumb_parent => Option::<String>::None,
+            })
+            .expect("Failed to render template");
+
+        // Verify the presence of collapsible elements
+        assert!(rendered.contains("x-data=\"{ collapsed: false }\""));
+        assert!(rendered.contains("mk-collapse-chevron"));
+
+        // Verify the reordered elements
+        let idx_properties = rendered.find("PROPERTIES").expect("PROPERTIES not found");
+        let idx_page_info = rendered.find("PAGE INFO").expect("PAGE INFO not found");
+        let idx_on_this_page = rendered
+            .find("ON THIS PAGE")
+            .expect("ON THIS PAGE not found");
+
+        assert!(
+            idx_properties < idx_page_info,
+            "PROPERTIES should be rendered before PAGE INFO"
+        );
+        assert!(
+            idx_page_info < idx_on_this_page,
+            "PAGE INFO should be rendered before ON THIS PAGE"
+        );
+    }
+
+    #[test]
     fn test_template_seed_maps_ids_to_bodies() {
         assert!(template_seed("meeting").contains("## Agenda"));
         assert!(template_seed("reading").contains("## Highlights"));
