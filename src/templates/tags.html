@@ -5,13 +5,20 @@ Miku - Tags
 {% endblock %}
 
 {% block content %}
-<article>
+<main class="mk-page">
     <h1>Tags</h1>
+    <p class="sub">{{ tags | length }} tags across your notes.</p>
 
-    <ul class="tag-list">
+    {% if tags %}
+    <div class="mk-tagcloud">
         {% for t in tags %}
-        <li><a href="/tags/{{ t.tag }}" class="tag-link">#{{ t.tag }}</a> <span class="tag-count">{{ t.count }}</span></li>
+        <a href="/tags/{{ t.tag }}" class="mk-tagpill" style="{% if t.count >= 10 %}font-size: 18px; padding: 12px 16px;{% elif t.count >= 5 %}font-size: 16px; padding: 11px 15px;{% else %}font-size: 14px; padding: 10px 14px;{% endif %}">
+            #{{ t.tag }} <span>{{ t.count }}</span>
+        </a>
         {% endfor %}
-    </ul>
-</article>
+    </div>
+    {% else %}
+    <p class="sub">No tags yet.</p>
+    {% endif %}
+</main>
 {% endblock %}

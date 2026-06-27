@@ -5,24 +5,34 @@ Miku - Search
 {% endblock %}
 
 {% block content %}
-<article>
+<main class="mk-page">
     <h1>Search</h1>
-    <form method="get" action="/search" class="search-form">
-        <input type="search" name="q" value="{{ query }}" placeholder="Search notes..." class="search-input" autofocus>
-        <button type="submit" class="btn btn-primary">Search</button>
+    {% if query %}
+    <p class="sub"><strong class="teal">{{ results | length }}</strong> results for "{{ query }}"</p>
+    {% else %}
+    <p class="sub">Search across your notes.</p>
+    {% endif %}
+
+    <form method="get" action="/search" class="mk-search-field">
+        <input type="search" name="q" value="{{ query }}" placeholder="Search notes..." autofocus>
+        <button type="submit" class="mk-btn mk-btn-primary">Search</button>
     </form>
 
     {% if query %}
         {% if results %}
-        <p class="search-meta">{{ results | length }} result(s) for "{{ query }}"</p>
-        <ul class="search-results">
             {% for r in results %}
-            <li><a href="/p/{{ r.path }}">{{ r.title }}</a></li>
+            <a href="/p/{{ r.path }}" class="mk-result">
+                <span class="head">
+                    <span class="ico" aria-hidden="true">P</span>
+                    <span class="ttl">{{ r.title }}</span>
+                    <span class="path">miku/{{ r.path }}.md</span>
+                </span>
+                <span class="snip">{{ r.snippet }}</span>
+            </a>
             {% endfor %}
-        </ul>
         {% else %}
-        <p class="search-meta">No results for "{{ query }}".</p>
+        <p class="sub">No matching notes found.</p>
         {% endif %}
     {% endif %}
-</article>
+</main>
 {% endblock %}

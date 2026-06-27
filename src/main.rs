@@ -40,6 +40,46 @@ struct PageRef {
 }
 
 #[derive(serde::Serialize)]
+struct SearchResult {
+    path: String,
+    title: String,
+    snippet: String,
+}
+
+fn search_snippet(body: &str, query: &str) -> String {
+    let plain = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if plain.is_empty() {
+        return "No preview available.".to_string();
+    }
+
+    let needle = query
+        .split_whitespace()
+        .find(|word| word.chars().any(char::is_alphanumeric))
+        .unwrap_or(query)
+        .to_ascii_lowercase();
+    let plain_lower = plain.to_ascii_lowercase();
+    let match_at = plain_lower.find(&needle).unwrap_or(0);
+    let start = plain[..match_at]
+        .rfind(' ')
+        .and_then(|idx| plain[..idx].rfind(' '))
+        .and_then(|idx| plain[..idx].rfind(' '))
+        .unwrap_or(0);
+    let end = plain[match_at..]
+        .char_indices()
+        .filter(|(_, ch)| ch.is_whitespace())
+        .nth(30)
+        .map(|(idx, _)| match_at + idx)
+        .unwrap_or(plain.len());
+    let snippet = plain[start..end].trim();
+
+    if end < plain.len() {
+        format!("{snippet}...")
+    } else {
+        snippet.to_string()
+    }
+}
+
+#[derive(serde::Serialize)]
 struct NavNode {
     name: String,         // folder segment name, or page title for leaves
     path: Option<String>, // Some(slug-path without .md) for pages; None for folders
@@ -591,8 +631,8 @@ async fn search(
     let results = if query_str.is_empty() {
         Vec::new()
     } else {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT path, title
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT path, title, body
              FROM tb_pages
              WHERE body_tsv @@ websearch_to_tsquery('english', $1)
              ORDER BY ts_rank(body_tsv, websearch_to_tsquery('english', $1)) DESC
@@ -604,9 +644,14 @@ async fn search(
         .context("Failed to execute full-text search")?;
 
         rows.into_iter()
-            .map(|(path, title)| PageRef {
-                path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
-                title,
+            .map(|(path, title, body)| {
+                let snippet = search_snippet(&body, &query_str);
+
+                SearchResult {
+                    path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
+                    title,
+                    snippet,
+                }
             })
             .collect()
     };

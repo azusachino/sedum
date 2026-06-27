@@ -5,17 +5,21 @@ Miku - #{{ tag }}
 {% endblock %}
 
 {% block content %}
-<article>
+<main class="mk-page">
     <h1>#{{ tag }}</h1>
+    <p class="sub"><strong class="teal">{{ pages | length }}</strong> pages tagged #{{ tag }}.</p>
 
     {% if pages %}
-    <ul class="page-list">
+    <div class="mk-grid2">
         {% for p in pages %}
-        <li><a href="/p/{{ p.path }}">{{ p.title }}</a></li>
+        <a href="/p/{{ p.path }}" class="mk-pagecard">
+            <span class="ttl">{{ p.title }}</span>
+            <span class="desc">miku/{{ p.path }}.md</span>
+        </a>
         {% endfor %}
-    </ul>
+    </div>
     {% else %}
-    <p style="color: var(--text-muted);">No pages with this tag.</p>
+    <p class="sub">No pages with this tag.</p>
     {% endif %}
-</article>
+</main>
 {% endblock %}
