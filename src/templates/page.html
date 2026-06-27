@@ -66,6 +66,15 @@ Miku - {{ path }}
         </section>
         {% endif %}
 
+        {% if exists and frontmatter %}
+        <section class="mk-card">
+            <div class="mk-card-label">PROPERTIES</div>
+            {% for key, value in frontmatter | items %}
+            <div class="mk-kv"><span class="k">{{ key }}</span><span class="v">{% if value is sequence %}{{ value | join(', ') }}{% else %}{{ value }}{% endif %}</span></div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
         <section class="mk-card">
             <div class="mk-card-label">PAGE INFO</div>
             <div class="mk-kv"><span class="k">Format</span><span class="v">Markdown</span></div>
