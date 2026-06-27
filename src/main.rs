@@ -712,8 +712,8 @@ async fn search(
     let results = if query_str.is_empty() {
         Vec::new()
     } else {
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT path, title, body
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT path, title
              FROM tb_pages
              WHERE body_tsv @@ websearch_to_tsquery('english', $1)
              ORDER BY ts_rank(body_tsv, websearch_to_tsquery('english', $1)) DESC
@@ -725,11 +725,21 @@ async fn search(
         .context("Failed to execute full-text search")?;
 
         rows.into_iter()
-            .map(|(path, title, body)| {
-                let snippet = search_snippet(&body, &query_str);
+            .map(|(path, title)| {
+                let display_path = path.strip_suffix(".md").unwrap_or(&path).to_string();
+                // The index stores only body_tsv, not the raw body, so build the
+                // snippet from the file on disk (the source of truth).
+                let snippet = safe_file_path(&display_path)
+                    .ok()
+                    .and_then(|file_path| fs::read_to_string(file_path).ok())
+                    .map(|raw| {
+                        let (_, body) = parse_frontmatter(&raw);
+                        search_snippet(body, &query_str)
+                    })
+                    .unwrap_or_else(|| "No preview available.".to_string());
 
                 SearchResult {
-                    path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
+                    path: display_path,
                     title,
                     snippet,
                 }
@@ -874,6 +884,43 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("mermaid.min.js"));
+    }
+
+    #[test]
+    fn test_page_template_renders_frontmatter_properties() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+        let template = templates_env
+            .get_template("page.html")
+            .expect("Failed to get page.html template");
+
+        let frontmatter = serde_json::json!({
+            "status": "draft",
+            "tags": ["miku", "wiki"],
+        });
+        let rendered = template
+            .render(context! {
+                title => "Test Title",
+                path => "Notes/Daily",
+                exists => true,
+                content_html => "<p>Test</p>",
+                loaded_hash => "abc",
+                has_mermaid => false,
+                backlinks => Vec::<Backlink>::new(),
+                toc => Vec::<Heading>::new(),
+                word_count => 1usize,
+                backlink_count => 0usize,
+                updated => "2026-06-27 12:00",
+                frontmatter => frontmatter,
+                breadcrumb_parent => Option::<String>::None,
+            })
+            .expect("Failed to render template");
+
+        assert!(rendered.contains("PROPERTIES"));
+        assert!(rendered.contains("status"));
+        assert!(rendered.contains("draft"));
+        // Sequence values render joined, not as a debug list.
+        assert!(rendered.contains("miku, wiki"));
     }
 
     #[test]
