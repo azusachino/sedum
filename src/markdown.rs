@@ -6,7 +6,8 @@
 //! indexer records which `[[links]]`/`![[embeds]]` exist, and the renderer must
 //! tokenize them identically or the index and the page would disagree.
 
-use comrak::nodes::{AstNode, NodeValue};
+use comrak::nodes::{AstNode, NodeCode, NodeMath, NodeValue};
+use comrak::Anchorizer;
 use regex::Regex;
 use std::path::Path;
 
@@ -114,7 +115,15 @@ pub fn comrak_options() -> comrak::Options<'static> {
     options.extension.autolink = true;
     options.extension.alerts = true;
     options.extension.wikilinks_title_after_pipe = true;
+    options.extension.header_id_prefix = Some(String::new());
     options
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Heading {
+    pub level: u8,
+    pub text: String,
+    pub id: String,
 }
 
 /// Concatenate the visible text of a wikilink node's children (its display
@@ -129,6 +138,46 @@ fn node_label<'a>(node: &'a AstNode<'a>) -> String {
         }
     }
     label
+}
+
+fn heading_text<'a>(node: &'a AstNode<'a>) -> String {
+    let mut text = String::new();
+    heading_text_append(node, &mut text);
+    text
+}
+
+fn heading_text_append<'a>(node: &'a AstNode<'a>, output: &mut String) {
+    match &node.data.borrow().value {
+        NodeValue::Text(literal) => output.push_str(literal),
+        NodeValue::Code(NodeCode { literal, .. }) | NodeValue::Math(NodeMath { literal, .. }) => {
+            output.push_str(literal);
+        }
+        NodeValue::LineBreak | NodeValue::SoftBreak => output.push(' '),
+        _ => {
+            for child in node.children() {
+                heading_text_append(child, output);
+            }
+        }
+    }
+}
+
+fn collect_toc<'a>(root: &'a AstNode<'a>) -> Vec<Heading> {
+    let mut anchorizer = Anchorizer::new();
+    let mut headings = Vec::new();
+
+    for node in root.descendants() {
+        if let NodeValue::Heading(heading) = &node.data.borrow().value {
+            let text = heading_text(node);
+            let id = anchorizer.anchorize(&text);
+            headings.push(Heading {
+                level: heading.level,
+                text,
+                id,
+            });
+        }
+    }
+
+    headings
 }
 
 fn escape_attr(s: &str) -> String {
@@ -294,11 +343,12 @@ fn render_text_inlines(text: &str, resolved: &dyn Fn(&str) -> bool, allow_tags: 
 /// `resolved` is called with a normalized page slug (see [`normalize_target`]).
 /// Raw HTML passthrough is enabled — this is a single-user, local wiki over
 /// trusted files, so users may hand-write HTML in their notes.
-pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
+pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (String, Vec<Heading>) {
     let arena = comrak::Arena::new();
     let mut options = comrak_options();
     options.render.r#unsafe = true;
     let root = comrak::parse_document(&arena, body, &options);
+    let toc = collect_toc(root);
 
     // Collect first, then mutate: detaching children mid-traversal would
     // corrupt the descendants() iterator. `[[ ]]` links are WikiLink nodes;
@@ -348,7 +398,11 @@ pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
     // Writing to a String is infallible, so the formatter result is ignored.
     let mut out = String::new();
     let _ = comrak::format_html(root, &options, &mut out);
-    out
+    (out, toc)
+}
+
+pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
+    render_html_with_toc(body, resolved).0
 }
 
 #[cfg(test)]
@@ -462,5 +516,45 @@ mod tests {
         let html = render_html("![[Page]]", &|_| true);
         assert!(html.contains(r#"<a href="/p/Page" class="wikilink">Page</a>"#));
         assert!(!html.contains("!<a"));
+    }
+
+    #[test]
+    fn test_render_html_with_toc_matches_heading_ids() {
+        let (html, toc) = render_html_with_toc(
+            "# Intro\n\n## Hello **World**\n\n### Hello `World`\n\n## Hello World\n",
+            &|_| true,
+        );
+
+        assert!(html.contains(
+            r##"<a href="#intro" aria-hidden="true" class="anchor" id="intro"></a>Intro"##
+        ));
+        assert!(html.contains(r##"<a href="#hello-world" aria-hidden="true" class="anchor" id="hello-world"></a>Hello <strong>World</strong>"##));
+        assert!(html.contains(r##"<a href="#hello-world-1" aria-hidden="true" class="anchor" id="hello-world-1"></a>Hello <code>World</code>"##));
+        assert!(html.contains(r##"<a href="#hello-world-2" aria-hidden="true" class="anchor" id="hello-world-2"></a>Hello World"##));
+        assert_eq!(
+            toc,
+            vec![
+                Heading {
+                    level: 1,
+                    text: "Intro".to_string(),
+                    id: "intro".to_string(),
+                },
+                Heading {
+                    level: 2,
+                    text: "Hello World".to_string(),
+                    id: "hello-world".to_string(),
+                },
+                Heading {
+                    level: 3,
+                    text: "Hello World".to_string(),
+                    id: "hello-world-1".to_string(),
+                },
+                Heading {
+                    level: 2,
+                    text: "Hello World".to_string(),
+                    id: "hello-world-2".to_string(),
+                },
+            ]
+        );
     }
 }

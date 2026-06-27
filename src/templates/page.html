@@ -5,44 +5,73 @@ Miku - {{ path }}
 {% endblock %}
 
 {% block content %}
-<article>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <h1 style="margin: 0;">{{ title }}</h1>
-        {% if exists %}
-        <a href="/p/{{ path }}/edit" class="btn btn-primary" style="padding: 0.5rem 1rem; background-color: var(--primary); color: white; border-radius: 6px; border: none; font-weight: 500; text-decoration: none;">
-            Edit Page
-        </a>
-        {% endif %}
-    </div>
-    
-    <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem;">
-        File path: <code>miku/{{ path }}.md</code>
-    </p>
+<main class="mk-read">
+    <article class="mk-article">
+        <nav class="mk-breadcrumb" aria-label="Breadcrumb">
+            {% if breadcrumb_parent %}
+            <span>{{ breadcrumb_parent }}</span>
+            <span>/</span>
+            {% endif %}
+            <span class="here">{{ title }}</span>
+            <span class="mk-pathchip">miku/{{ path }}.md</span>
+        </nav>
 
-    <div class="content-body">
-        {% if exists %}
-            {{ content_html | safe }}
-        {% else %}
-            <div style="text-align: center; padding: 3rem 1rem; border: 2px dashed var(--border); border-radius: 12px; margin-top: 2rem;">
-                <p style="font-size: 1.2rem; color: var(--text-muted); margin-bottom: 1.5rem;">
-                    This page doesn't exist yet.
-                </p>
-                <a href="/p/{{ path }}/edit" style="display: inline-block; padding: 0.75rem 1.5rem; background-color: var(--primary); color: white; border-radius: 8px; font-weight: 600; text-decoration: none; border: none; transition: background-color 0.2s;">
-                    Create Page
-                </a>
+        <div class="mk-title-row">
+            <h1 class="mk-h1">{{ title }}</h1>
+            {% if exists %}
+            <div class="mk-title-actions">
+                <a href="/p/{{ path }}/edit" class="mk-btn mk-btn-primary">Edit</a>
             </div>
-        {% endif %}
-    </div>
+            {% endif %}
+        </div>
 
-    {% if backlinks %}
-    <aside class="backlinks">
-        <h2 class="backlinks-title">Linked from</h2>
-        <ul class="backlinks-list">
-            {% for bl in backlinks %}
-            <li><a href="/p/{{ bl.path }}">{{ bl.title }}</a></li>
-            {% endfor %}
-        </ul>
+        {% if exists and frontmatter.description is defined and frontmatter.description %}
+        <p class="mk-lede">{{ frontmatter.description }}</p>
+        {% endif %}
+
+        {% if exists %}
+        <div class="mk-prose">
+            {{ content_html | safe }}
+        </div>
+
+        {% if backlinks %}
+        <aside class="backlinks mk-card" data-reading-section="backlinks" x-show="showBacklinks">
+            <div class="mk-card-label">LINKED FROM</div>
+            <ul class="backlinks-list">
+                {% for bl in backlinks %}
+                <li><a href="/p/{{ bl.path }}">{{ bl.title }}</a></li>
+                {% endfor %}
+            </ul>
+        </aside>
+        {% endif %}
+        {% else %}
+        <section class="mk-card">
+            <div class="mk-card-label">MISSING PAGE</div>
+            <p class="mk-lede">This page doesn't exist yet.</p>
+            <a href="/p/{{ path }}/edit" class="mk-btn mk-btn-primary">Create Page</a>
+        </section>
+        {% endif %}
+    </article>
+
+    <aside class="mk-rail">
+        {% if exists and toc %}
+        <section class="mk-card">
+            <div class="mk-card-label">ON THIS PAGE</div>
+            <nav class="mk-toc" aria-label="On this page">
+                {% for heading in toc %}
+                <a href="#{{ heading.id }}" class="level-{{ heading.level }}">{{ heading.text }}</a>
+                {% endfor %}
+            </nav>
+        </section>
+        {% endif %}
+
+        <section class="mk-card">
+            <div class="mk-card-label">PAGE INFO</div>
+            <div class="mk-kv"><span class="k">Format</span><span class="v">Markdown</span></div>
+            <div class="mk-kv"><span class="k">Words</span><span class="v">{{ word_count }}</span></div>
+            <div class="mk-kv"><span class="k">Backlinks</span><span class="v teal">{{ backlink_count }}</span></div>
+            <div class="mk-kv"><span class="k">Updated</span><span class="v">{{ updated }}</span></div>
+        </section>
     </aside>
-    {% endif %}
-</article>
+</main>
 {% endblock %}

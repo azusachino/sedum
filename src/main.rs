@@ -6,7 +6,8 @@ use axum::{
     routing::{get, post},
     Form, Router,
 };
-use miku::markdown::{extract_title, parse_frontmatter, render_html};
+use chrono::{DateTime, Local};
+use miku::markdown::{extract_title, parse_frontmatter, render_html_with_toc, Heading};
 use minijinja::{context, Environment};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -166,6 +167,23 @@ fn compute_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn format_modified_time(file_path: &StdPath) -> String {
+    fs::metadata(file_path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .map(|modified| {
+            let local: DateTime<Local> = modified.into();
+            local.format("%Y-%m-%d %H:%M").to_string()
+        })
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn breadcrumb_parent(path: &str) -> Option<String> {
+    path.rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+        .filter(|parent| !parent.is_empty())
+}
+
 // Helper struct for building nav tree (internal use only)
 #[derive(Debug)]
 struct TreeNode {
@@ -301,6 +319,12 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
             loaded_hash => "",
             has_mermaid => false,
             backlinks => Vec::<Backlink>::new(),
+            toc => Vec::<Heading>::new(),
+            word_count => 0usize,
+            backlink_count => 0usize,
+            updated => "Missing",
+            frontmatter => serde_json::Value::Object(serde_json::Map::new()),
+            breadcrumb_parent => breadcrumb_parent(&path),
             nav_pages => nav,
         })?;
         return Ok(Html(rendered).into_response());
@@ -311,6 +335,8 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     let loaded_hash = compute_hash(&raw_content);
     let (frontmatter, body) = parse_frontmatter(&raw_content);
     let title = extract_title(&path, frontmatter.as_ref(), body);
+    let word_count = body.split_whitespace().count();
+    let updated = format_modified_time(&file_path);
 
     // Resolve wikilink targets against the index so missing pages render
     // distinctly. The index is a disposable read model; a freshly saved page
@@ -321,7 +347,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         .context("Failed to load page slugs for wikilink resolution")?;
     let slug_set: HashSet<String> = slugs.into_iter().map(|(s,)| s).collect();
 
-    let content_html = render_html(body, &|norm| slug_set.contains(norm));
+    let (content_html, toc) = render_html_with_toc(body, &|norm| slug_set.contains(norm));
 
     // Check has_mermaid
     let has_mermaid = raw_content.contains("```mermaid");
@@ -356,6 +382,9 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     } else {
         Vec::new()
     };
+    let backlink_count = backlinks.len();
+    let frontmatter =
+        frontmatter.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
     let rendered = template.render(context! {
         title => title,
@@ -365,6 +394,12 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         loaded_hash => loaded_hash,
         has_mermaid => has_mermaid,
         backlinks => backlinks,
+        toc => toc,
+        word_count => word_count,
+        backlink_count => backlink_count,
+        updated => updated,
+        frontmatter => frontmatter,
+        breadcrumb_parent => breadcrumb_parent(&path),
         nav_pages => nav,
     })?;
 
@@ -671,6 +706,13 @@ mod tests {
                 content_html => "<p>Test content</p>",
                 loaded_hash => "abc",
                 has_mermaid => false,
+                backlinks => Vec::<Backlink>::new(),
+                toc => Vec::<Heading>::new(),
+                word_count => 2usize,
+                backlink_count => 0usize,
+                updated => "2026-06-27 12:00",
+                frontmatter => serde_json::Value::Object(serde_json::Map::new()),
+                breadcrumb_parent => Option::<String>::None,
             })
             .expect("Failed to render template");
 
@@ -695,6 +737,13 @@ mod tests {
                 content_html => "<p>Test content</p>",
                 loaded_hash => "abc",
                 has_mermaid => true,
+                backlinks => Vec::<Backlink>::new(),
+                toc => Vec::<Heading>::new(),
+                word_count => 2usize,
+                backlink_count => 0usize,
+                updated => "2026-06-27 12:00",
+                frontmatter => serde_json::Value::Object(serde_json::Map::new()),
+                breadcrumb_parent => Option::<String>::None,
             })
             .expect("Failed to render template");
 
