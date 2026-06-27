@@ -175,6 +175,35 @@
             text-align: center;
             overflow-x: auto;
         }
+        .mk-sidebar-panel[hidden] { display: none !important; }
+        .mk-sidebar-tools {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .mk-sidebar-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .mk-shortcut-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .mk-sidebar-empty {
+            padding: 12px;
+            border: 1px dashed var(--border);
+            border-radius: var(--radius-ctl);
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .mk-footer-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
     </style>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" id="prism-theme">
@@ -228,11 +257,24 @@
         <div class="mk-body">
             <aside class="mk-sidebar">
                 {% set sec = section | default('files') %}
-                <nav class="mk-tabs" aria-label="Sections">
-                    <a href="/p/Index" class="mk-tab {% if sec == 'files' %}is-active{% endif %}">Files</a>
-                    <a href="/search" class="mk-tab {% if sec == 'search' %}is-active{% endif %}">Search</a>
-                    <a href="/tags" class="mk-tab {% if sec == 'tags' %}is-active{% endif %}">Tags</a>
-                </nav>
+                <div x-data="{ sidebarTab: '{{ sec }}' }">
+                    <nav class="mk-tabs" aria-label="Sections" role="tablist">
+                        <button type="button" role="tab" class="mk-tab {% if sec == 'files' %}is-active{% endif %}"
+                                :class="{ 'is-active': sidebarTab === 'files' }"
+                                :aria-selected="sidebarTab === 'files'"
+                                aria-controls="sidebar-files"
+                                @click="sidebarTab = 'files'">Files</button>
+                        <button type="button" role="tab" class="mk-tab {% if sec == 'search' %}is-active{% endif %}"
+                                :class="{ 'is-active': sidebarTab === 'search' }"
+                                :aria-selected="sidebarTab === 'search'"
+                                aria-controls="sidebar-search"
+                                @click="sidebarTab = 'search'; $nextTick(() => $refs.sidebarSearch && $refs.sidebarSearch.focus())">Search</button>
+                        <button type="button" role="tab" class="mk-tab {% if sec == 'tags' %}is-active{% endif %}"
+                                :class="{ 'is-active': sidebarTab === 'tags' }"
+                                :aria-selected="sidebarTab === 'tags'"
+                                aria-controls="sidebar-tags"
+                                @click="sidebarTab = 'tags'">Tags</button>
+                    </nav>
 
                 {% macro nav_node(node, prefix) %}
                   {% if node.path %}
@@ -289,46 +331,95 @@
                   {% endif %}
                 {% endmacro %}
 
-                <div class="mk-sidebar-scroll">
-                  <form class="mk-newpage new-page-form"
-                        onsubmit="event.preventDefault(); const n = this.querySelector('.new-page-input').value.trim(); if (n) window.location.href = '/p/' + n.split('/').map(encodeURIComponent).join('/') + '/edit';">
-                    <input class="new-page-input" type="text"
-                           placeholder="New page name..." autocomplete="off" aria-label="New page name">
-                    <button class="new-page-btn" type="submit" aria-label="Create page">+</button>
-                    <span class="mk-kbd">Cmd N</span>
-                  </form>
+                    <div class="mk-sidebar-scroll">
+                      <section id="sidebar-files" class="mk-sidebar-panel" role="tabpanel"
+                               x-show="sidebarTab === 'files'" :hidden="sidebarTab !== 'files'">
+                        <form class="mk-newpage new-page-form"
+                              onsubmit="event.preventDefault(); const n = this.querySelector('.new-page-input').value.trim(); if (n) window.location.href = '/p/' + n.split('/').map(encodeURIComponent).join('/') + '/edit';">
+                          <input class="new-page-input" type="text"
+                                 placeholder="New page name..." autocomplete="off" aria-label="New page name">
+                          <button class="new-page-btn" type="submit" aria-label="Create page">+</button>
+                          <span class="mk-kbd">Cmd N</span>
+                        </form>
 
-                  <div class="mk-section-label file-viewer-title">Files</div>
-                  <div class="nav-tree" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
-                       @dragover.prevent="dragOver = true"
-                       @dragleave="dragOver = false"
-                       @drop.prevent="
-                         dragOver = false;
-                         const from = $event.dataTransfer.getData('text/plain');
-                         if(!from) return;
-                         const to = from.split('/').pop();
-                         if (from === to) return;
-                         const fd = new FormData(); fd.append('from', from); fd.append('to', to);
-                         fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
-                           .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
-                       ">
-                    {% if nav_pages %}
-                      {% for node in nav_pages %}{{ nav_node(node, '') }}{% endfor %}
-                    {% else %}
-                      <span class="file-viewer-empty">No pages yet.</span>
-                    {% endif %}
-                  </div>
+                        <div class="mk-section-label file-viewer-title">Files</div>
+                        <div class="nav-tree" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
+                             @dragover.prevent="dragOver = true"
+                             @dragleave="dragOver = false"
+                             @drop.prevent="
+                               dragOver = false;
+                               const from = $event.dataTransfer.getData('text/plain');
+                               if(!from) return;
+                               const to = from.split('/').pop();
+                               if (from === to) return;
+                               const fd = new FormData(); fd.append('from', from); fd.append('to', to);
+                               fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
+                                 .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
+                             ">
+                          {% if nav_pages %}
+                            {% for node in nav_pages %}{{ nav_node(node, '') }}{% endfor %}
+                          {% else %}
+                            <span class="file-viewer-empty">No pages yet.</span>
+                          {% endif %}
+                        </div>
+                      </section>
+
+                      <section id="sidebar-search" class="mk-sidebar-panel mk-sidebar-tools" role="tabpanel"
+                               x-show="sidebarTab === 'search'" :hidden="sidebarTab !== 'search'">
+                        <form method="get" action="/search" class="mk-sidebar-tools">
+                          <label class="mk-search-field" aria-label="Search notes">
+                            <span aria-hidden="true">⌕</span>
+                            <input x-ref="sidebarSearch" type="search" name="q"
+                                   value="{{ query | default('') }}" placeholder="Search notes..." autocomplete="off">
+                          </label>
+                          <div class="mk-sidebar-actions" aria-label="Search scope">
+                            <button type="submit" name="scope" value="all" class="mk-chip">All</button>
+                            <button type="submit" name="scope" value="title" class="mk-chip">Title</button>
+                            <button type="submit" name="scope" value="body" class="mk-chip">Body</button>
+                          </div>
+                        </form>
+
+                        <div class="mk-section-label">Shortcuts</div>
+                        <div class="mk-shortcut-list">
+                          <a class="mk-tagrow" href="/search?q=Index"><span class="name">Index</span><span class="count">recent</span></a>
+                          <a class="mk-tagrow" href="/search?q=todo"><span class="name">todo</span><span class="count">query</span></a>
+                          <a class="mk-tagrow" href="/search?q=meeting"><span class="name">meeting</span><span class="count">query</span></a>
+                        </div>
+                      </section>
+
+                      <section id="sidebar-tags" class="mk-sidebar-panel mk-sidebar-tools" role="tabpanel"
+                               x-show="sidebarTab === 'tags'" :hidden="sidebarTab !== 'tags'">
+                        <div class="mk-section-label">Tags</div>
+                        {% if tags is defined and tags %}
+                          <div class="mk-shortcut-list">
+                            {% for t in tags %}
+                              <a class="mk-tagrow" href="/tags/{{ t.tag }}">
+                                <span class="swatch" style="background: var(--teal);" aria-hidden="true"></span>
+                                <span class="name">#{{ t.tag }}</span>
+                                <span class="count">{{ t.count }}</span>
+                              </a>
+                            {% endfor %}
+                          </div>
+                        {% else %}
+                          <div class="mk-sidebar-empty">Open Tags to load tag counts.</div>
+                        {% endif %}
+                      </section>
+                    </div>
                 </div>
 
                 <div class="mk-appearance">
-                    <div class="mk-section-label">Accent</div>
-                    <div class="mk-swatches" aria-label="Accent color">
+                    <div class="mk-footer-row">
+                      <div>
+                        <div class="mk-section-label">Accent</div>
+                        <div class="mk-swatches" aria-label="Accent color">
                         <button type="button" class="mk-swatch miku" data-set-accent="miku" aria-label="Miku accent"></button>
                         <button type="button" class="mk-swatch ocean" data-set-accent="ocean" aria-label="Ocean accent"></button>
                         <button type="button" class="mk-swatch sakura" data-set-accent="sakura" aria-label="Sakura accent"></button>
                         <button type="button" class="mk-swatch mono" data-set-accent="mono" aria-label="Mono accent"></button>
+                        </div>
+                      </div>
+                      <div class="mk-synced"><i></i><span>Miku Wiki v0.1.0</span></div>
                     </div>
-                    <div class="mk-synced"><i></i><span>Miku Wiki v0.1.0</span></div>
                 </div>
             </aside>
 
