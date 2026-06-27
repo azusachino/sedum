@@ -334,13 +334,12 @@
                     <div class="mk-sidebar-scroll">
                       <section id="sidebar-files" class="mk-sidebar-panel" role="tabpanel"
                                x-show="sidebarTab === 'files'" :hidden="sidebarTab !== 'files'">
-                        <form class="mk-newpage new-page-form"
-                              onsubmit="event.preventDefault(); const n = this.querySelector('.new-page-input').value.trim(); if (n) window.location.href = '/p/' + n.split('/').map(encodeURIComponent).join('/') + '/edit';">
-                          <input class="new-page-input" type="text"
-                                 placeholder="New page name..." autocomplete="off" aria-label="New page name">
-                          <button class="new-page-btn" type="submit" aria-label="Create page">+</button>
+                        <button type="button" class="mk-newpage new-page-form" data-go-new
+                                @click="openCreate()">
+                          <span class="new-page-btn" aria-hidden="true">+</span>
+                          <span class="new-page-input">New page</span>
                           <span class="mk-kbd">Cmd N</span>
-                        </form>
+                        </button>
 
                         <div class="mk-section-label file-viewer-title">Files</div>
                         <div class="nav-tree" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
@@ -430,6 +429,66 @@
             </main>
         </div>
 
+        <div class="mk-overlay" x-show="createOpen" x-transition.opacity
+             @keydown.enter.window="if (createOpen) { $event.preventDefault(); confirmCreate(); }"
+             @keydown.escape.window="closeCreate()" x-cloak>
+            <section class="mk-modal create" @click.outside="closeCreate()" aria-modal="true" role="dialog" aria-labelledby="create-title">
+                <div class="mk-modal-bar"></div>
+                <form @submit.prevent="confirmCreate()">
+                    <div class="mk-modal-body">
+                        <h2 id="create-title" class="mk-wordmark">Create page<small>choose a path and template</small></h2>
+
+                        <div class="mk-card">
+                            <input x-ref="createTitle" class="mk-create-title" type="text"
+                                   x-model="createTitle" data-create-title
+                                   placeholder="Untitled page" autocomplete="off" aria-label="Page title">
+                            <div class="mk-create-path">
+                                <span>Path</span>
+                                <strong data-create-path x-text="createPath + '.md'"></strong>
+                            </div>
+                        </div>
+
+                        <div class="mk-card">
+                            <div class="mk-card-label">Location</div>
+                            <div class="mk-choice">
+                                <button type="button" class="mk-chip" data-folder=""
+                                        :class="{ 'is-active': createFolder === '' }"
+                                        @click="createFolder = ''">root</button>
+                                <button type="button" class="mk-chip" data-folder="guides/"
+                                        :class="{ 'is-active': createFolder === 'guides/' }"
+                                        @click="createFolder = 'guides/'">guides/</button>
+                                <button type="button" class="mk-chip" data-folder="projects/"
+                                        :class="{ 'is-active': createFolder === 'projects/' }"
+                                        @click="createFolder = 'projects/'">projects/</button>
+                            </div>
+                        </div>
+
+                        <div class="mk-card">
+                            <div class="mk-card-label">Template</div>
+                            <div class="mk-tplgrid">
+                                <template x-for="template in createTemplates" :key="template.id">
+                                    <button type="button" class="mk-tpl"
+                                            :class="{ 'is-active': createTemplate === template.id }"
+                                            @click="createTemplate = template.id">
+                                        <span class="ico" x-text="template.icon" aria-hidden="true"></span>
+                                        <span>
+                                            <strong x-text="template.name"></strong>
+                                            <small x-text="template.hint"></small>
+                                        </span>
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mk-modal-foot">
+                        <button type="submit" class="mk-btn mk-btn-primary">Create</button>
+                        <button type="button" class="mk-btn mk-btn-ghost" @click="closeCreate()">Cancel</button>
+                        <span class="mk-kbd">Enter</span>
+                    </div>
+                </form>
+            </section>
+        </div>
+
         <div class="mk-overlay" x-show="settingsOpen" x-transition.opacity @keydown.escape.window="settingsOpen = false" x-cloak>
             <section class="mk-modal" @click.outside="settingsOpen = false" aria-modal="true" role="dialog" aria-labelledby="settings-title">
                 <div class="mk-modal-bar"></div>
@@ -481,9 +540,27 @@
         function mikuShell() {
             return {
                 settingsOpen: false,
+                createOpen: false,
+                createTitle: '',
+                createFolder: '',
+                createTemplate: 'blank',
+                createTemplates: [
+                    { id: 'blank', name: 'Blank', hint: 'Start with an empty note', icon: '+', body: '' },
+                    { id: 'meeting', name: 'Meeting', hint: 'Agenda, notes, and actions', icon: 'M', body: '# Meeting\n\n## Agenda\n\n## Notes\n\n## Actions\n' },
+                    { id: 'reading', name: 'Reading', hint: 'Summary and highlights', icon: 'R', body: '# Reading Notes\n\n## Summary\n\n## Highlights\n\n## Questions\n' },
+                    { id: 'project', name: 'Project', hint: 'Plan, tasks, and status', icon: 'P', body: '# Project\n\n## Goal\n\n## Tasks\n\n## Status\n' }
+                ],
                 animatedAccents: true,
                 showBacklinks: true,
                 compactSpacing: false,
+                get createSlug() {
+                    return (this.createTitle || '').trim().toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '-')
+                        .replace(/^-+|-+$/g, '') || 'untitled-page';
+                },
+                get createPath() {
+                    return this.createFolder + this.createSlug;
+                },
                 init() {
                     this.animatedAccents = this.readBool('miku:animated-accents', true);
                     this.showBacklinks = this.readBool('miku:show-backlinks', true);
@@ -492,6 +569,22 @@
                     this.$watch('animatedAccents', value => { this.writeBool('miku:animated-accents', value); this.applyReadingPrefs(); });
                     this.$watch('showBacklinks', value => { this.writeBool('miku:show-backlinks', value); this.applyReadingPrefs(); });
                     this.$watch('compactSpacing', value => { this.writeBool('miku:compact-spacing', value); this.applyReadingPrefs(); });
+                },
+                openCreate() {
+                    this.createOpen = true;
+                    this.createTitle = '';
+                    this.createFolder = '';
+                    this.createTemplate = 'blank';
+                    this.$nextTick(() => {
+                        if (this.$refs.createTitle) this.$refs.createTitle.focus();
+                    });
+                },
+                closeCreate() {
+                    this.createOpen = false;
+                },
+                confirmCreate() {
+                    const path = this.createPath.split('/').map(encodeURIComponent).join('/');
+                    if (path) window.location.href = '/p/' + path + '/edit';
                 },
                 readBool(key, fallback) {
                     try {
