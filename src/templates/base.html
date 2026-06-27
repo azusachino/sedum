@@ -652,7 +652,62 @@
                 if (window.mermaid && evt.detail.target.querySelector('.mermaid')) {
                     mermaid.init(undefined, evt.detail.target.querySelectorAll('.mermaid'));
                 }
+                // Try syncing the indicator status on load
+                syncIndicatorStatus();
             });
+
+            function syncIndicatorStatus() {
+                const indicator = document.querySelector("[data-sync-indicator]");
+                if (indicator) {
+                    indicator.hidden = false;
+                    indicator.style.opacity = (window.mikuSyncActive === true) ? "1" : "0.05";
+                }
+            }
+
+            async function refreshArticle(pagePath) {
+                const article = document.querySelector(".mk-article[data-page-path]");
+                if (!article) return;
+                try {
+                    const res = await fetch(window.location.pathname, {
+                        headers: { "Cache-Control": "no-cache" },
+                    });
+                    if (!res.ok) return;
+                    const html = await res.text();
+                    const doc = new DOMParser().parseFromString(html, "text/html");
+                    const fresh = doc.querySelector(".mk-article .mk-prose");
+                    const current = article.querySelector(".mk-prose");
+                    if (fresh && current) {
+                        current.innerHTML = fresh.innerHTML;
+                        if (window.Prism) {
+                            Prism.highlightAllUnder(current);
+                        }
+                    }
+                } catch (err) {
+                    /* network blip: ignore */
+                }
+            }
+
+            if (typeof EventSource !== "undefined") {
+                window.mikuSyncActive = false;
+                const es = new EventSource("/events");
+                es.onopen = function () { 
+                    window.mikuSyncActive = true; 
+                    syncIndicatorStatus();
+                };
+                es.onerror = function () { 
+                    window.mikuSyncActive = false; 
+                    syncIndicatorStatus();
+                };
+                es.onmessage = function (event) {
+                    const article = document.querySelector(".mk-article[data-page-path]");
+                    if (article) {
+                        const pagePath = article.getAttribute("data-page-path");
+                        if (event.data === pagePath) {
+                            refreshArticle(pagePath);
+                        }
+                    }
+                };
+            }
         })();
     </script>
 
