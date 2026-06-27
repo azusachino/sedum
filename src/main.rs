@@ -368,12 +368,32 @@ async fn nav_pages(db: &sqlx::PgPool) -> Result<Vec<NavNode>, AppError> {
 // Dispatch to view or edit based on the path suffix
 async fn page_handler(
     Path(path): Path<String>,
+    Query(params): Query<EditQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
     if let Some(stripped_path) = path.strip_suffix("/edit") {
-        page_edit(stripped_path.to_string(), state).await
+        page_edit(stripped_path.to_string(), params.template, state).await
     } else {
         page_view(path, state).await
+    }
+}
+
+// Optional `?template=<id>` from the create-page modal, used to seed a brand-new
+// page's editor body. Ignored for existing pages.
+#[derive(serde::Deserialize)]
+struct EditQuery {
+    template: Option<String>,
+}
+
+// Seed bodies for the create-page modal's "start from" templates. The server is
+// the single source of truth for this content (the modal only passes the id),
+// so a freshly created page opens prefilled without a client-side markdown lib.
+fn template_seed(id: &str) -> &'static str {
+    match id {
+        "meeting" => "# Meeting\n\n## Agenda\n\n## Notes\n\n## Actions\n",
+        "reading" => "# Reading Notes\n\n## Summary\n\n## Highlights\n\n## Questions\n",
+        "project" => "# Project\n\n## Goal\n\n## Tasks\n\n## Status\n",
+        _ => "",
     }
 }
 
@@ -481,7 +501,11 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
 }
 
 // Render the edit page
-async fn page_edit(path: String, state: AppState) -> Result<Response, AppError> {
+async fn page_edit(
+    path: String,
+    template_id: Option<String>,
+    state: AppState,
+) -> Result<Response, AppError> {
     info!("Rendering edit page for path: {}", path);
     let file_path = safe_file_path(&path)?;
     let template = state.templates.get_template("edit.html")?;
@@ -492,7 +516,10 @@ async fn page_edit(path: String, state: AppState) -> Result<Response, AppError> 
         let hash = compute_hash(&raw_content);
         (raw_content, hash)
     } else {
-        (String::new(), String::new())
+        // New page: seed the editor from the chosen create-modal template (if
+        // any). loaded_hash stays empty so the save path treats it as a create.
+        let seed = template_id.as_deref().map(template_seed).unwrap_or("");
+        (seed.to_string(), String::new())
     };
 
     let nav = nav_pages(&state.db).await?;
@@ -847,6 +874,38 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("mermaid.min.js"));
+    }
+
+    #[test]
+    fn test_template_seed_maps_ids_to_bodies() {
+        assert!(template_seed("meeting").contains("## Agenda"));
+        assert!(template_seed("reading").contains("## Highlights"));
+        assert!(template_seed("project").contains("## Tasks"));
+        // Blank and unknown ids both produce an empty page.
+        assert_eq!(template_seed("blank"), "");
+        assert_eq!(template_seed("bogus"), "");
+    }
+
+    #[test]
+    fn test_edit_template_renders_seed_body_into_textarea() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+
+        let template = templates_env
+            .get_template("edit.html")
+            .expect("Failed to get edit.html template");
+        // Mirrors page_edit seeding a new page from ?template=meeting.
+        let rendered = template
+            .render(context! {
+                path => "Notes/Standup",
+                body => template_seed("meeting"),
+                loaded_hash => "",
+                nav_pages => Vec::<NavNode>::new(),
+            })
+            .expect("Failed to render template");
+
+        assert!(rendered.contains("## Agenda"));
+        assert!(rendered.contains("## Actions"));
     }
 
     #[test]

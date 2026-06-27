@@ -545,10 +545,10 @@
                 createFolder: '',
                 createTemplate: 'blank',
                 createTemplates: [
-                    { id: 'blank', name: 'Blank', hint: 'Start with an empty note', icon: '+', body: '' },
-                    { id: 'meeting', name: 'Meeting', hint: 'Agenda, notes, and actions', icon: 'M', body: '# Meeting\n\n## Agenda\n\n## Notes\n\n## Actions\n' },
-                    { id: 'reading', name: 'Reading', hint: 'Summary and highlights', icon: 'R', body: '# Reading Notes\n\n## Summary\n\n## Highlights\n\n## Questions\n' },
-                    { id: 'project', name: 'Project', hint: 'Plan, tasks, and status', icon: 'P', body: '# Project\n\n## Goal\n\n## Tasks\n\n## Status\n' }
+                    { id: 'blank', name: 'Blank', hint: 'Start with an empty note', icon: '+' },
+                    { id: 'meeting', name: 'Meeting', hint: 'Agenda, notes, and actions', icon: 'M' },
+                    { id: 'reading', name: 'Reading', hint: 'Summary and highlights', icon: 'R' },
+                    { id: 'project', name: 'Project', hint: 'Plan, tasks, and status', icon: 'P' }
                 ],
                 animatedAccents: true,
                 showBacklinks: true,
@@ -584,7 +584,13 @@
                 },
                 confirmCreate() {
                     const path = this.createPath.split('/').map(encodeURIComponent).join('/');
-                    if (path) window.location.href = '/p/' + path + '/edit';
+                    if (!path) return;
+                    // The server owns the seed bodies; pass only the chosen
+                    // template id (blank needs no query).
+                    const query = this.createTemplate && this.createTemplate !== 'blank'
+                        ? '?template=' + encodeURIComponent(this.createTemplate)
+                        : '';
+                    window.location.href = '/p/' + path + '/edit' + query;
                 },
                 readBool(key, fallback) {
                     try {
