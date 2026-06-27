@@ -55,17 +55,6 @@ Miku - {{ path }}
     </article>
 
     <aside class="mk-rail">
-        {% if exists and toc %}
-        <section class="mk-card">
-            <div class="mk-card-label">ON THIS PAGE</div>
-            <nav class="mk-toc" aria-label="On this page">
-                {% for heading in toc %}
-                <a href="#{{ heading.id }}" class="level-{{ heading.level }}">{{ heading.text }}</a>
-                {% endfor %}
-            </nav>
-        </section>
-        {% endif %}
-
         {% if exists and frontmatter %}
         <section class="mk-card">
             <div class="mk-card-label">PROPERTIES</div>
@@ -82,6 +71,17 @@ Miku - {{ path }}
             <div class="mk-kv"><span class="k">Backlinks</span><span class="v teal">{{ backlink_count }}</span></div>
             <div class="mk-kv"><span class="k">Updated</span><span class="v">{{ updated }}</span></div>
         </section>
+
+        {% if exists and toc %}
+        <section class="mk-card">
+            <div class="mk-card-label">ON THIS PAGE</div>
+            <nav class="mk-toc" aria-label="On this page">
+                {% for heading in toc %}
+                <a href="#{{ heading.id }}" class="level-{{ heading.level }}">{{ heading.text }}</a>
+                {% endfor %}
+            </nav>
+        </section>
+        {% endif %}
     </aside>
 </main>
 
