@@ -5,46 +5,143 @@ Miku - Edit {{ path }}
 {% endblock %}
 
 {% block content %}
-<article>
-    <h1>Edit: {{ path }}</h1>
-    <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem;">
-        File path: <code>miku/{{ path }}.md</code>
-    </p>
+<form action="/p/{{ path }}" method="POST" class="mk-edit" data-editor>
+    <input type="hidden" name="loaded_hash" value="{{ loaded_hash }}">
 
-    <form action="/p/{{ path }}" method="POST" style="display: flex; flex-direction: column; gap: 1.5rem;">
-        <input type="hidden" name="loaded_hash" value="{{ loaded_hash }}">
-        
-        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-            <label for="body-textarea" style="font-weight: 600; font-size: 0.9rem; color: var(--text-muted);">
-                Content (Markdown + optional Frontmatter)
-            </label>
-            <textarea 
-                id="body-textarea" 
-                name="body" 
-                rows="20" 
-                style="width: 100%; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.95rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; background-color: var(--bg-panel); color: var(--text); resize: vertical; outline: none; transition: border-color 0.2s;"
+    <header class="mk-edit-toolbar">
+        <div class="mk-editing"><i aria-hidden="true"></i><span>Editing</span></div>
+        <span class="mk-pathchip">miku/{{ path }}.md</span>
+
+        <div class="mk-fmt" aria-label="Formatting helpers">
+            <button type="button" data-wrap="**" title="Bold" aria-label="Bold">B</button>
+            <button type="button" data-wrap="*" title="Italic" aria-label="Italic">I</button>
+            <button type="button" data-prefix="# " title="Heading 1" aria-label="Heading 1">H1</button>
+            <button type="button" data-link title="Link" aria-label="Link">[]</button>
+        </div>
+
+        <div class="mk-edit-actions">
+            <a href="/p/{{ path }}" class="mk-btn mk-btn-ghost">Cancel</a>
+            <button type="submit" class="mk-btn mk-btn-primary">Save</button>
+        </div>
+    </header>
+
+    <div class="mk-edit-split">
+        <section class="mk-edit-pane" aria-labelledby="source-label">
+            <div id="source-label" class="mk-pane-label">MARKDOWN SOURCE</div>
+            <textarea
+                id="body-textarea"
+                class="mk-textarea"
+                name="body"
+                spellcheck="true"
                 placeholder="---&#10;title: Page Title&#10;---&#10;&#10;# Hello World"
             >{{ body }}</textarea>
-        </div>
+        </section>
 
-        <div style="display: flex; gap: 1rem;">
-            <button 
-                type="submit" 
-                style="padding: 0.75rem 1.5rem; background-color: var(--primary); color: white; border-radius: 8px; font-weight: 600; border: none; cursor: pointer; transition: background-color 0.2s;"
-                onmouseover="this.style.backgroundColor='var(--primary-hover)'"
-                onmouseout="this.style.backgroundColor='var(--primary)'"
-            >
-                Save Page
-            </button>
-            <a 
-                href="/p/{{ path }}" 
-                style="display: flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: 1px solid var(--border); background-color: var(--bg-panel); color: var(--text); border-radius: 8px; font-weight: 600; text-decoration: none; transition: background-color 0.2s;"
-                onmouseover="this.style.backgroundColor='var(--code-bg)'"
-                onmouseout="this.style.backgroundColor='var(--bg-panel)'"
-            >
-                Cancel
-            </a>
-        </div>
-    </form>
-</article>
+        <section class="mk-edit-pane" aria-labelledby="preview-label">
+            <div id="preview-label" class="mk-pane-label live"><i aria-hidden="true"></i><span>LIVE PREVIEW</span></div>
+            <div class="mk-preview mk-prose" data-preview aria-live="polite"></div>
+        </section>
+    </div>
+</form>
+
+<script>
+    (function() {
+        const editor = document.querySelector('[data-editor]');
+        if (!editor) return;
+
+        const textarea = editor.querySelector('#body-textarea');
+        const preview = editor.querySelector('[data-preview]');
+        const buttons = editor.querySelectorAll('[data-wrap], [data-prefix], [data-link]');
+        let timer = null;
+        let requestId = 0;
+
+        function selectedRange() {
+            return {
+                start: textarea.selectionStart || 0,
+                end: textarea.selectionEnd || 0,
+                value: textarea.value.slice(textarea.selectionStart || 0, textarea.selectionEnd || 0)
+            };
+        }
+
+        function replaceSelection(value, startOffset, endOffset) {
+            const range = selectedRange();
+            textarea.setRangeText(value, range.start, range.end, 'end');
+            textarea.focus();
+            textarea.setSelectionRange(range.start + startOffset, range.start + value.length - endOffset);
+            queuePreview(0);
+        }
+
+        function lineStart(position) {
+            return textarea.value.lastIndexOf('\n', Math.max(0, position - 1)) + 1;
+        }
+
+        buttons.forEach(function(button) {
+            button.addEventListener('click', function() {
+                const range = selectedRange();
+
+                if (button.dataset.wrap) {
+                    const marker = button.dataset.wrap;
+                    const fallback = marker === '**' ? 'bold text' : 'italic text';
+                    const text = range.value || fallback;
+                    replaceSelection(marker + text + marker, marker.length, marker.length);
+                    return;
+                }
+
+                if (button.dataset.prefix) {
+                    const prefix = button.dataset.prefix;
+                    const start = lineStart(range.start);
+                    textarea.setRangeText(prefix, start, start, 'end');
+                    textarea.focus();
+                    textarea.setSelectionRange(range.start + prefix.length, range.end + prefix.length);
+                    queuePreview(0);
+                    return;
+                }
+
+                if (button.hasAttribute('data-link')) {
+                    const text = range.value || 'link text';
+                    replaceSelection('[' + text + '](url)', 1, 6);
+                }
+            });
+        });
+
+        function renderPreview() {
+            const current = ++requestId;
+            const body = new URLSearchParams();
+            body.set('body', textarea.value);
+            preview.dataset.state = 'loading';
+
+            fetch('/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: body
+            })
+                .then(function(response) {
+                    if (!response.ok) throw new Error('Preview failed');
+                    return response.text();
+                })
+                .then(function(html) {
+                    if (current !== requestId) return;
+                    preview.innerHTML = html || '<p><em>Blank page.</em></p>';
+                    preview.dataset.state = 'ready';
+                    if (window.Prism) window.Prism.highlightAllUnder(preview);
+                })
+                .catch(function() {
+                    if (current !== requestId) return;
+                    preview.innerHTML = '<p><em>Preview unavailable.</em></p>';
+                    preview.dataset.state = 'error';
+                });
+        }
+
+        function queuePreview(delay) {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(renderPreview, delay);
+        }
+
+        textarea.addEventListener('input', function() {
+            queuePreview(250);
+        });
+
+        queuePreview(0);
+    })();
+</script>
 {% endblock %}

@@ -178,6 +178,7 @@ fn app(state: AppState) -> Router {
         .route("/search", get(search))
         .route("/tags", get(tags_index))
         .route("/tags/{tag}", get(tag_filter))
+        .route("/preview", post(preview))
         .route("/p/{*path}", get(page_handler).post(page_save))
         .route("/api/move", post(page_move))
         .route("/api/trash", post(page_trash))
@@ -476,6 +477,26 @@ async fn page_edit(path: String, state: AppState) -> Result<Response, AppError> 
 struct EditForm {
     body: String,
     loaded_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PreviewForm {
+    body: String,
+}
+
+async fn preview(
+    State(state): State<AppState>,
+    Form(form): Form<PreviewForm>,
+) -> Result<impl IntoResponse, AppError> {
+    let slugs: Vec<(String,)> = sqlx::query_as("SELECT slug FROM tb_pages")
+        .fetch_all(&state.db)
+        .await
+        .context("Failed to load page slugs for preview wikilink resolution")?;
+    let slug_set: HashSet<String> = slugs.into_iter().map(|(s,)| s).collect();
+    let (_, body) = parse_frontmatter(&form.body);
+    let (content_html, _) = render_html_with_toc(body, &|norm| slug_set.contains(norm));
+
+    Ok(Html(content_html))
 }
 
 // Handle the saving of a page
@@ -793,6 +814,31 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("mermaid.min.js"));
+    }
+
+    #[test]
+    fn test_edit_template_has_live_preview_editor() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+
+        let template = templates_env
+            .get_template("edit.html")
+            .expect("Failed to get edit.html template");
+        let rendered = template
+            .render(context! {
+                path => "TestPath",
+                body => "# Draft",
+                loaded_hash => "abc",
+                nav_pages => Vec::<NavNode>::new(),
+            })
+            .expect("Failed to render template");
+
+        assert!(rendered.contains("class=\"mk-edit\""));
+        assert!(rendered.contains("class=\"mk-edit-split\""));
+        assert!(rendered.contains("class=\"mk-preview mk-prose\""));
+        assert!(rendered.contains("name=\"loaded_hash\" value=\"abc\""));
+        assert!(rendered.contains("fetch('/preview'"));
+        assert!(rendered.contains("action=\"/p/TestPath\" method=\"POST\""));
     }
 
     #[test]
