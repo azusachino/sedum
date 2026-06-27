@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{
+        sse::{self, KeepAlive, Sse},
+        Html, IntoResponse, Redirect, Response,
+    },
     routing::{get, post},
     Form, Router,
 };
@@ -18,6 +21,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
+use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
 
@@ -90,6 +94,10 @@ struct NavNode {
 struct AppState {
     db: sqlx::PgPool,
     templates: Arc<Environment<'static>>,
+    // Broadcasts the relative path (`.md` stripped) of each page the background
+    // indexer just re-indexed, so connected browsers can live-refresh via SSE.
+    // Read-only fan-out: the SSE layer never writes the Postgres index.
+    events: tokio::sync::broadcast::Sender<String>,
 }
 
 // Custom error handling for Axum route handlers
@@ -151,14 +159,22 @@ async fn main() -> Result<()> {
     // 5. Initialize Minijinja template environment
     let mut templates_env = Environment::new();
     templates_env.set_loader(minijinja::path_loader("src/templates"));
+
+    // SSE broadcast channel: the indexer is the sole sender; each browser /events
+    // connection is a subscriber. Capacity 256 bounds backpressure; slow
+    // subscribers see Lagged and resync on the next event.
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
     let state = AppState {
         db: pool.clone(),
         templates: Arc::new(templates_env),
+        events: events_tx.clone(),
     };
 
     // 6. Initialize background indexer
-    let _indexer = miku::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("miku"))
-        .context("Failed to initialize background indexer")?;
+    let _indexer =
+        miku::indexer::IndexerQueue::new(pool, std::path::PathBuf::from("miku"), events_tx)
+            .context("Failed to initialize background indexer")?;
 
     // 7. Build Router & Configure axum routes
     let app = app(state);
@@ -180,6 +196,7 @@ fn app(state: AppState) -> Router {
         .route("/tags/{tag}", get(tag_filter))
         .route("/preview", post(preview))
         .route("/p/{*path}", get(page_handler).post(page_save))
+        .route("/events", get(events))
         .route("/api/move", post(page_move))
         .route("/api/trash", post(page_trash))
         .nest_service("/static", ServeDir::new("static"))
@@ -191,6 +208,22 @@ fn app(state: AppState) -> Router {
 // Redirect root "/" to "/p/Index"
 async fn redirect_to_index() -> impl IntoResponse {
     Redirect::temporary("/p/Index")
+}
+
+// Server-Sent Events stream of re-indexed page paths. One-way server->client:
+// the browser opens `new EventSource('/events')` and live-refreshes the open
+// page when it sees its own path. This handler only SUBSCRIBES to the broadcast
+// channel filled by the background indexer; it never writes the Postgres index,
+// preserving the single-writer invariant.
+async fn events(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
+    let rx = state.events.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|item| {
+        // Drop Lagged errors gracefully: the client refetches on the next event.
+        item.ok().map(|path| Ok(sse::Event::default().data(path)))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 // Helper to get safe path under miku/ and check for directory traversal
@@ -954,6 +987,89 @@ mod tests {
         assert_eq!(level3.len(), 1);
         assert_eq!(level3[0].name, "Deep Page");
         assert_eq!(level3[0].path, Some("a/b/c/d".to_string()));
+    }
+
+    // The SSE feature is a read-only broadcast fan-out: the indexer sends a
+    // page path, every subscriber's stream yields it. This proves the
+    // broadcast -> BroadcastStream wiring in isolation (no DB, no HTTP server),
+    // mirroring exactly what the `/events` handler does internally.
+    #[tokio::test]
+    async fn test_events_broadcast_reaches_subscriber_stream() {
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
+        // Subscribe BEFORE sending (mirrors a connected browser).
+        let rx = tx.subscribe();
+        let mut stream = BroadcastStream::new(rx)
+            .filter_map(|item| item.ok().map(Ok::<_, std::convert::Infallible>));
+
+        // The indexer broadcasts a re-indexed page path (`.md` stripped form).
+        tx.send("Notes/Daily".to_string())
+            .expect("subscriber present");
+
+        let received = stream.next().await.expect("stream item").expect("ok item");
+        assert_eq!(received, "Notes/Daily");
+    }
+
+    // `send` returns Err only when there are no subscribers; the indexer ignores
+    // that with `let _ =`. Confirm the no-subscriber case is an error (so the
+    // ignore is correct) and does not panic.
+    #[test]
+    fn test_events_send_with_no_subscribers_is_err() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<String>(256);
+        drop(rx);
+        assert!(tx.send("Orphan".to_string()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_app_router_registers_events_route() {
+        // Build the router with a dummy AppState (no DB connection is made until
+        // a handler runs). This proves `/events` is wired into `fn app`.
+        let (events, _) = tokio::sync::broadcast::channel::<String>(256);
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+        let state = AppState {
+            db: sqlx::PgPool::connect_lazy("postgres://localhost/miku_test_unused")
+                .expect("lazy pool"),
+            templates: Arc::new(templates_env),
+            events,
+        };
+        // If `/events` (or any route) were malformed, `app` would panic here.
+        let _router = app(state);
+    }
+
+    #[test]
+    fn test_page_template_has_sse_live_preview() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+
+        let template = templates_env
+            .get_template("page.html")
+            .expect("Failed to get page.html template");
+        let rendered = template
+            .render(context! {
+                title => "Test Title",
+                path => "Notes/Daily",
+                exists => true,
+                content_html => "<p>Test content</p>",
+                loaded_hash => "abc",
+                has_mermaid => false,
+                backlinks => Vec::<Backlink>::new(),
+                toc => Vec::<Heading>::new(),
+                word_count => 2usize,
+                backlink_count => 0usize,
+                updated => "2026-06-27 12:00",
+                frontmatter => serde_json::Value::Object(serde_json::Map::new()),
+                breadcrumb_parent => Option::<String>::None,
+            })
+            .expect("Failed to render template");
+
+        // minijinja HTML-escapes `/` to `&#x2f;` inside the attribute value; the
+        // browser's getAttribute decodes it back to "Notes/Daily", matching the
+        // unescaped path the SSE broadcast sends. Assert on the escaped form.
+        assert!(rendered.contains("data-page-path=\"Notes&#x2f;Daily\""));
+        assert!(rendered.contains("new EventSource(\"/events\")"));
+        assert!(rendered.contains("class=\"mk-synced\""));
+        assert!(rendered.contains("data-sync-indicator"));
     }
 
     #[test]

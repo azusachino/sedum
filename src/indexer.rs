@@ -11,7 +11,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
@@ -207,22 +207,28 @@ pub struct IndexerQueue {
 }
 
 impl IndexerQueue {
-    pub fn new(db_pool: PgPool, content_root: PathBuf) -> Result<Self> {
+    pub fn new(
+        db_pool: PgPool,
+        content_root: PathBuf,
+        events: broadcast::Sender<String>,
+    ) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(1024);
 
         // 1. Run startup reconcile sweep in the background
         let db_clone = db_pool.clone();
         let content_root_clone = content_root.clone();
+        let events_clone = events.clone();
         tokio::spawn(async move {
             info!("Starting startup reconcile sweep...");
-            if let Err(e) = Self::reconcile_all(&db_clone, &content_root_clone).await {
+            if let Err(e) = Self::reconcile_all(&db_clone, &content_root_clone, &events_clone).await
+            {
                 error!("Startup reconcile sweep failed: {:?}", e);
             } else {
                 info!("Startup reconcile sweep completed successfully.");
             }
 
             // Start consumer loop
-            Self::run_consumer(receiver, db_clone, content_root_clone).await;
+            Self::run_consumer(receiver, db_clone, content_root_clone, events_clone).await;
         });
 
         // 2. Set up notify watcher
@@ -310,6 +316,7 @@ impl IndexerQueue {
         mut receiver: mpsc::Receiver<WatcherEvent>,
         db_pool: PgPool,
         content_root: PathBuf,
+        events: broadcast::Sender<String>,
     ) {
         let mut debounce_buffer = HashSet::new();
         let debounce_duration = Duration::from_millis(300);
@@ -317,7 +324,7 @@ impl IndexerQueue {
         while let Some(event) = receiver.recv().await {
             if event == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                 info!("Manual reconcile event triggered, running reconciliation...");
-                if let Err(e) = Self::reconcile_all(&db_pool, &content_root).await {
+                if let Err(e) = Self::reconcile_all(&db_pool, &content_root, &events).await {
                     error!("Reconciliation sweep failed: {:?}", e);
                 }
                 continue;
@@ -329,7 +336,7 @@ impl IndexerQueue {
             while let Ok(evt) = receiver.try_recv() {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
-                    let _ = Self::reconcile_all(&db_pool, &content_root).await;
+                    let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
                     break;
                 }
                 debounce_buffer.insert(evt);
@@ -346,7 +353,7 @@ impl IndexerQueue {
             while let Ok(evt) = receiver.try_recv() {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
-                    let _ = Self::reconcile_all(&db_pool, &content_root).await;
+                    let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
                     break;
                 }
                 debounce_buffer.insert(evt);
@@ -356,18 +363,31 @@ impl IndexerQueue {
             if !debounce_buffer.is_empty() {
                 let batch: Vec<WatcherEvent> = debounce_buffer.drain().collect();
                 info!("Processing batch of {} filesystem events...", batch.len());
-                if let Err(e) = Self::process_batch(batch, &db_pool, &content_root).await {
-                    error!("Failed to index batch: {:?}", e);
+                match Self::process_batch(batch, &db_pool, &content_root).await {
+                    // Stream changed page paths to connected browsers AFTER the
+                    // index commit succeeds. This is a read-only broadcast: it
+                    // does not touch the Postgres index (single-writer invariant
+                    // is preserved). `send` errors only when there are no
+                    // subscribers, which is fine to ignore.
+                    Ok(affected) => {
+                        for path in affected {
+                            let _ = events.send(path);
+                        }
+                    }
+                    Err(e) => error!("Failed to index batch: {:?}", e),
                 }
             }
         }
     }
 
+    /// Index a batch of filesystem events. Returns the affected page paths
+    /// (relative, `.md` stripped) for downstream SSE broadcast. Sole writer of
+    /// the Postgres index.
     async fn process_batch(
         batch: Vec<WatcherEvent>,
         db_pool: &PgPool,
         content_root: &PathBuf,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let mut to_upsert = Vec::new();
         let mut to_delete = Vec::new();
 
@@ -377,6 +397,15 @@ impl IndexerQueue {
                 WatcherEvent::Deleted(p) => to_delete.push(p),
             }
         }
+
+        // Collect affected page paths (relative, `.md` stripped) so the consumer
+        // can broadcast them to connected browsers after the index commit. This
+        // is purely for the SSE read-side; it never writes the index.
+        let mut affected: Vec<String> = Vec::new();
+        let push_affected = |affected: &mut Vec<String>, path_str: &str| {
+            let stripped = path_str.strip_suffix(".md").unwrap_or(path_str);
+            affected.push(stripped.to_string());
+        };
 
         let mut tx = db_pool.begin().await?;
 
@@ -388,6 +417,7 @@ impl IndexerQueue {
                 .bind(&path_str)
                 .execute(&mut *tx)
                 .await?;
+            push_affected(&mut affected, &path_str);
         }
 
         // 2. Process upserts
@@ -401,6 +431,7 @@ impl IndexerQueue {
                     .bind(&path_str)
                     .execute(&mut *tx)
                     .await?;
+                push_affected(&mut affected, &path_str);
                 continue;
             }
 
@@ -513,6 +544,8 @@ impl IndexerQueue {
             .bind(&slug)
             .execute(&mut *tx)
             .await?;
+
+            push_affected(&mut affected, &path_str);
         }
 
         // 3. Resolve target_ids of all dangling links pointing to all pages
@@ -527,10 +560,14 @@ impl IndexerQueue {
         .await?;
 
         tx.commit().await?;
-        Ok(())
+        Ok(affected)
     }
 
-    async fn reconcile_all(db_pool: &PgPool, content_root: &Path) -> Result<()> {
+    async fn reconcile_all(
+        db_pool: &PgPool,
+        content_root: &Path,
+        _events: &broadcast::Sender<String>,
+    ) -> Result<()> {
         info!(
             "Walking content root {:?} to reconcile page database index...",
             content_root
@@ -614,6 +651,9 @@ impl IndexerQueue {
             );
             let mut batch = to_upsert;
             batch.extend(to_delete);
+            // Reconcile does not track which individual pages changed, so we
+            // intentionally drop the affected-path list here (no per-path SSE
+            // emit for the periodic reconcile sweep).
             Self::process_batch(batch, db_pool, &content_root.to_path_buf()).await?;
         } else {
             info!("Database index is fully in sync with filesystem.");

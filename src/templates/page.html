@@ -6,7 +6,7 @@ Miku - {{ path }}
 
 {% block content %}
 <main class="mk-read">
-    <article class="mk-article">
+    <article class="mk-article" data-page-path="{{ path }}">
         <nav class="mk-breadcrumb" aria-label="Breadcrumb">
             {% if breadcrumb_parent %}
             <span>{{ breadcrumb_parent }}</span>
@@ -14,6 +14,7 @@ Miku - {{ path }}
             {% endif %}
             <span class="here">{{ title }}</span>
             <span class="mk-pathchip">miku/{{ path }}.md</span>
+            <span class="mk-synced" data-sync-indicator hidden><i aria-hidden="true"></i><span>synced</span></span>
         </nav>
 
         <div class="mk-title-row">
@@ -74,4 +75,50 @@ Miku - {{ path }}
         </section>
     </aside>
 </main>
+
+{# Live preview: stream re-indexed pages from the server (SSE) and swap the
+   rendered article in place — no full reload. Progressive enhancement: the page
+   is fully functional without JS. #}
+<script>
+    (function () {
+        if (typeof EventSource === "undefined") return;
+        const article = document.querySelector(".mk-article[data-page-path]");
+        if (!article) return;
+        const pagePath = article.getAttribute("data-page-path");
+        const indicator = article.querySelector("[data-sync-indicator]");
+
+        function setSynced(on) {
+            if (!indicator) return;
+            indicator.hidden = false;
+            indicator.style.opacity = on ? "1" : "0.4";
+        }
+
+        async function refreshArticle() {
+            try {
+                const res = await fetch(window.location.pathname, {
+                    headers: { "Cache-Control": "no-cache" },
+                });
+                if (!res.ok) return;
+                const html = await res.text();
+                const doc = new DOMParser().parseFromString(html, "text/html");
+                const fresh = doc.querySelector(".mk-article .mk-prose");
+                const current = article.querySelector(".mk-prose");
+                if (fresh && current) {
+                    current.innerHTML = fresh.innerHTML;
+                }
+            } catch (err) {
+                /* network blip: ignore, next event re-syncs */
+            }
+        }
+
+        const es = new EventSource("/events");
+        es.onopen = function () { setSynced(true); };
+        es.onerror = function () { setSynced(false); };
+        es.onmessage = function (event) {
+            if (event.data === pagePath) {
+                refreshArticle();
+            }
+        };
+    })();
+</script>
 {% endblock %}
