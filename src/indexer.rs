@@ -566,7 +566,7 @@ impl IndexerQueue {
     async fn reconcile_all(
         db_pool: &PgPool,
         content_root: &Path,
-        _events: &broadcast::Sender<String>,
+        events: &broadcast::Sender<String>,
     ) -> Result<()> {
         info!(
             "Walking content root {:?} to reconcile page database index...",
@@ -651,10 +651,14 @@ impl IndexerQueue {
             );
             let mut batch = to_upsert;
             batch.extend(to_delete);
-            // Reconcile does not track which individual pages changed, so we
-            // intentionally drop the affected-path list here (no per-path SSE
-            // emit for the periodic reconcile sweep).
-            Self::process_batch(batch, db_pool, &content_root.to_path_buf()).await?;
+            // The reconcile batch contains only genuinely-changed pages
+            // (mtime-newer upserts, missing deletions, new files), so broadcast
+            // them too. This is the sole SSE trigger under podman bind mounts,
+            // where inotify events do not propagate to the watcher.
+            let affected = Self::process_batch(batch, db_pool, &content_root.to_path_buf()).await?;
+            for path in affected {
+                let _ = events.send(path);
+            }
         } else {
             info!("Database index is fully in sync with filesystem.");
         }
