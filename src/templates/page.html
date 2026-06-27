@@ -56,30 +56,45 @@ Miku - {{ path }}
 
     <aside class="mk-rail">
         {% if exists and frontmatter %}
-        <section class="mk-card">
-            <div class="mk-card-label">PROPERTIES</div>
-            {% for key, value in frontmatter | items %}
-            <div class="mk-kv"><span class="k">{{ key }}</span><span class="v">{% if value is sequence %}{{ value | join(', ') }}{% else %}{{ value }}{% endif %}</span></div>
-            {% endfor %}
+        <section class="mk-card" x-data="{ collapsed: false }" :class="{ 'is-collapsed': collapsed }">
+            <div class="mk-card-label" @click="collapsed = !collapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+                <span>PROPERTIES</span>
+                <span class="mk-collapse-chevron" :class="{ 'is-collapsed': collapsed }"></span>
+            </div>
+            <div x-show="!collapsed" x-transition>
+                {% for key, value in frontmatter | items %}
+                <div class="mk-kv"><span class="k">{{ key }}</span><span class="v">{% if value is sequence %}{{ value | join(', ') }}{% else %}{{ value }}{% endif %}</span></div>
+                {% endfor %}
+            </div>
         </section>
         {% endif %}
 
-        <section class="mk-card">
-            <div class="mk-card-label">PAGE INFO</div>
-            <div class="mk-kv"><span class="k">Format</span><span class="v">Markdown</span></div>
-            <div class="mk-kv"><span class="k">Words</span><span class="v">{{ word_count }}</span></div>
-            <div class="mk-kv"><span class="k">Backlinks</span><span class="v teal">{{ backlink_count }}</span></div>
-            <div class="mk-kv"><span class="k">Updated</span><span class="v">{{ updated }}</span></div>
+        <section class="mk-card" x-data="{ collapsed: false }" :class="{ 'is-collapsed': collapsed }">
+            <div class="mk-card-label" @click="collapsed = !collapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+                <span>PAGE INFO</span>
+                <span class="mk-collapse-chevron" :class="{ 'is-collapsed': collapsed }"></span>
+            </div>
+            <div x-show="!collapsed" x-transition>
+                <div class="mk-kv"><span class="k">Format</span><span class="v">Markdown</span></div>
+                <div class="mk-kv"><span class="k">Words</span><span class="v">{{ word_count }}</span></div>
+                <div class="mk-kv"><span class="k">Backlinks</span><span class="v teal">{{ backlink_count }}</span></div>
+                <div class="mk-kv"><span class="k">Updated</span><span class="v">{{ updated }}</span></div>
+            </div>
         </section>
 
         {% if exists and toc %}
-        <section class="mk-card">
-            <div class="mk-card-label">ON THIS PAGE</div>
-            <nav class="mk-toc" aria-label="On this page">
-                {% for heading in toc %}
-                <a href="#{{ heading.id }}" class="level-{{ heading.level }}">{{ heading.text }}</a>
-                {% endfor %}
-            </nav>
+        <section class="mk-card" x-data="{ collapsed: false }" :class="{ 'is-collapsed': collapsed }">
+            <div class="mk-card-label" @click="collapsed = !collapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+                <span>ON THIS PAGE</span>
+                <span class="mk-collapse-chevron" :class="{ 'is-collapsed': collapsed }"></span>
+            </div>
+            <div x-show="!collapsed" x-transition>
+                <nav class="mk-toc" aria-label="On this page">
+                    {% for heading in toc %}
+                    <a href="#{{ heading.id }}" class="level-{{ heading.level }}">{{ heading.text }}</a>
+                    {% endfor %}
+                </nav>
+            </div>
         </section>
         {% endif %}
     </aside>
