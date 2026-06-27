@@ -221,6 +221,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" id="prism-theme">
     <script defer src="/static/miku.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10" defer></script>
 
     {% if has_mermaid %}
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
@@ -237,7 +238,7 @@
     {% block head %}{% endblock %}
 </head>
 <body x-data="mikuShell()" x-init="init()" class="bg-bg-base text-text-base font-body antialiased selection:bg-teal/32 overflow-hidden h-full">
-    <div class="mk-app relative flex flex-col h-screen overflow-hidden">
+    <div class="mk-app relative flex flex-col h-screen overflow-hidden" hx-boost="true">
         <div class="mk-orbs absolute inset-0 overflow-hidden pointer-events-none z-0" aria-hidden="true">
             <div class="mk-orb a absolute rounded-full"></div>
             <div class="mk-orb b absolute rounded-full"></div>
