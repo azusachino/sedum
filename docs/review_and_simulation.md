@@ -6,9 +6,9 @@ This document reviews the Miku personal Markdown wiki skeleton, analyzes popular
 
 ## 1. Competitive Landscape Analysis
 
-We analyze four popular wiki systems to determine what to adopt, adapt, or reject for Sedum.
+We analyze four popular wiki systems to determine what to adopt, adapt, or reject for Miku.
 
-| System | Source of Truth | Editing Model | Extensibility | Scale Strategy | What Sedum Learns / Rejects |
+| System | Source of Truth | Editing Model | Extensibility | Scale Strategy | What Miku Learns / Rejects |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Notion** | Cloud DB (Postgres/DynamoDB) | Block-based rich editor | Proprietary API & Integration platform | Cloud-sharded, heavy server load | **Learn:** Interactive `/` commands, `Ctrl-K` palette, inline bi-directional context.<br/>**Reject:** Block-level structure, proprietary lock-in. |
 | **Obsidian** | Local files (`.md` in folder) | Local markdown + client plugins | Local JS plugin ecosystem (heavy) | Client-side index cache (FTS via plugin/JS) | **Learn:** "Files-are-truth" trust model, NFC-slug resolution, `[[wiki-linking]]` autocomplete.<br/>**Reject:** Electron-heavy wrapper, paid sync. |
@@ -78,7 +78,7 @@ Handling up to 100,000 files in a personal wiki introduces constraints across th
 
 ### B. Startup Reconciler Throughput
 - **The Problem:** Walking 100,000 files and doing single-row DB updates sequentially will take several minutes to complete, freezing the app on startup.
-- **Sedum Parallel & Batched Pipeline:**
+- **Miku Parallel & Batched Pipeline:**
   1. **Parallel FS Walk:** Walk the directory tree in parallel using `rayon` or tokio threadpools.
   2. **Fast Metadata Check:** Read file metadata (`mtime`) and compare it against `tb_pages.mtime` in a single query or batch check. Skip parsing for unchanged files.
   3. **Batch Insertion:** For new/changed files, batch updates using Postgres `COPY` or multi-row insert statements (e.g., 1,000 pages at a time) rather than executing individual page transactions.

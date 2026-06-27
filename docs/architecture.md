@@ -127,7 +127,7 @@ wiki model, no client JS):
 - `GET /page/Foo/edit` → `<textarea>` with raw Markdown
 - `POST /page/Foo` → atomic save → 303 redirect back to the readonly view
 
-A `SEDUM_READONLY` flag (roadmap) gates the edit/save routes for publishing.
+A `MIKU_READONLY` flag (roadmap) gates the edit/save routes for publishing.
 Rich rendering beyond CommonMark is server-side via comrak, which supports
 wikilinks and Obsidian/GitHub `> [!note]` callouts natively; `![[transclusion]]`
 is our own extractor — never MDX/JSX (see
@@ -184,7 +184,7 @@ is in the indexer, not the DB:
   - The indexer walks recursively and is depth-agnostic; `[[ ]]` resolves by
     slug, so whatever foldering the user or importer chooses is transparent to
     links. Physical layout and logical organization stay decoupled.
-- 100k is import/archive territory, pairing naturally with `SEDUM_READONLY`.
+- 100k is import/archive territory, pairing naturally with `MIKU_READONLY`.
 
 ## Out of scope
 

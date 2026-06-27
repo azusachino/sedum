@@ -74,7 +74,7 @@ coarse and lies across `git`/`rsync`).
 
 **On CRDTs (`loro-dev/loro`) — considered, deferred.** Loro is excellent
 rich-text CRDT tech, but it solves *concurrent multi-writer / offline merge* — a
-problem Sedum deliberately doesn't have (single-user, single-writer). The deeper
+problem Miku deliberately doesn't have (single-user, single-writer). The deeper
 blocker: it **conflicts with files-are-truth**. A CRDT's authoritative state is
 its operation log, which cannot be reconstructed from a plain `.md` snapshot, so
 adopting it forces a fork — either the oplog becomes canonical (breaking "just
@@ -87,7 +87,7 @@ core invariant and earns its own ADR. Not a single-user need.
 protection is the *deployment's* job. Two modes cover every persona:
 - **`MIKU_READONLY`** (roadmap flag) — serves view-only, no edit/save routes.
   For publishing; no auth needed because nothing writes.
-- **Writable network deploy** — put Sedum behind an **authenticating reverse
+- **Writable network deploy** — put Miku behind an **authenticating reverse
   proxy** (oauth2-proxy / basic auth / Tailscale). Documented, not built.
 
 Building accounts/RBAC is explicitly rejected — it reinvents Notion and breaks
@@ -127,7 +127,7 @@ atomically, keeping the original name but **deduping by content hash**
 basename in `assets/`; served with caching headers.
 
 **Orphan assets — never auto-deleted.** Auto-GC of user files violates
-files-are-truth (an asset may be referenced from outside Sedum, or kept
+files-are-truth (an asset may be referenced from outside Miku, or kept
 deliberately). Instead, a **report**: assets on disk minus
 `tb_links(kind = 'asset' AND is_embed)` = unreferenced. Manual cleanup only. No
 new table — asset targets already live in `tb_links`.

@@ -121,7 +121,7 @@ Three levers, in order of preference:
 3. **`PollWatcher` fallback past a threshold.** The `notify` crate ships a
    polling watcher that uses **zero** inotify watches, trading latency for
    budget. Switch to it only when directory count is genuinely extreme — this is
-   the 100k-files-in-archive / `SEDUM_READONLY` territory from
+   the 100k-files-in-archive / `MIKU_READONLY` territory from
    `architecture.md`.
 
 New-subdirectory race: a file created in a brand-new directory *before* its watch
