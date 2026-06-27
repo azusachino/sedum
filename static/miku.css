@@ -460,6 +460,93 @@ a { color: var(--teal); }
 .mk-empty h1 { margin: 0 0 8px; font-family: var(--font-display); font-weight: 700; font-size: 34px; background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .mk-empty .sub { margin: 0 0 28px; font-size: 16px; color: var(--muted); font-weight: 600; max-width: 440px; line-height: 1.55; }
 
+/* ---- Mermaid Diagram & Lightbox Magnifier ---- */
+pre.mermaid {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  text-align: center;
+  overflow-x: auto;
+  cursor: zoom-in;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+  margin: 24px 0;
+}
+pre.mermaid:hover {
+  border-color: var(--teal);
+  background: var(--panel2);
+  box-shadow: 0 4px 16px var(--tealsoft);
+}
+pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Mermaid Lightbox Overlay */
+.mk-mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 12, 16, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.mk-mermaid-lightbox.is-active {
+  opacity: 1;
+}
+.mk-mermaid-lightbox-container {
+  max-width: 92%;
+  max-height: 92%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  transform-origin: center center;
+  transition: transform 0.1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.mk-mermaid-lightbox-container:active {
+  cursor: grabbing;
+}
+.mk-mermaid-lightbox-container svg {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  filter: drop-shadow(0 12px 36px rgba(0, 0, 0, 0.6));
+}
+.mk-mermaid-lightbox-close {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  z-index: 10000;
+}
+.mk-mermaid-lightbox-close:hover {
+  background: var(--panel2);
+  border-color: var(--teal);
+  color: var(--teal);
+  transform: scale(1.05);
+}
+
 /* ===========================================================================
    10. Reduced motion — disable decorative loops
    =========================================================================== */
