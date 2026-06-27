@@ -18,6 +18,23 @@
         })();
     </script>
 
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <style type="tailwindcss">
+        @theme {
+            --color-teal: var(--teal);
+            --color-pink: var(--pink);
+            --color-border: var(--border);
+            --color-panel: var(--panel);
+            --color-panel2: var(--panel2);
+            --color-text-base: var(--text);
+            --color-muted: var(--muted);
+            --color-bg-base: var(--bg);
+            --font-display: var(--font-display);
+            --font-body: var(--font-body);
+            --font-mono: var(--font-mono);
+        }
+        @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+    </style>
     <link rel="stylesheet" href="/static/miku.css">
     <style>
         [x-cloak] { display: none !important; }
@@ -219,40 +236,45 @@
 
     {% block head %}{% endblock %}
 </head>
-<body x-data="mikuShell()" x-init="init()">
-    <div class="mk-app">
-        <div class="mk-orbs" aria-hidden="true">
-            <div class="mk-orb a"></div>
-            <div class="mk-orb b"></div>
-            <div class="mk-orb c"></div>
+<body x-data="mikuShell()" x-init="init()" class="bg-bg-base text-text-base font-body antialiased selection:bg-teal/32 overflow-hidden h-full">
+    <div class="mk-app relative flex flex-col h-screen overflow-hidden">
+        <div class="mk-orbs absolute inset-0 overflow-hidden pointer-events-none z-0" aria-hidden="true">
+            <div class="mk-orb a absolute rounded-full"></div>
+            <div class="mk-orb b absolute rounded-full"></div>
+            <div class="mk-orb c absolute rounded-full"></div>
         </div>
 
-        <header class="mk-topbar">
-            <a class="mk-brand" href="/p/Index" aria-label="Miku home">
-                <span class="mk-logo" aria-hidden="true">
-                    <span class="eqbars"><i></i><i></i><i></i><i></i></span>
+        <header class="mk-topbar relative z-10 flex items-center gap-5 px-5.5 py-3.25 border-b border-border bg-topbar backdrop-blur-[22px] flex-shrink-0">
+            <a class="mk-brand flex items-center gap-3 w-66 flex-shrink-0 no-underline" href="/p/Index" aria-label="Miku home">
+                <span class="mk-logo relative w-10.5 h-10.5 rounded-[14px] bg-grad flex items-center justify-center shadow-[0_8px_22px_var(--tealglow)]" aria-hidden="true">
+                    <span class="eqbars flex items-end gap-[3px] h-[18px]">
+                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite]"></i>
+                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.18s]"></i>
+                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.36s]"></i>
+                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.54s]"></i>
+                    </span>
                 </span>
-                <span class="mk-wordmark">Miku<small>personal wiki</small></span>
+                <span class="mk-wordmark font-display font-bold text-[21px] tracking-[0.4px] text-text-base leading-none">Miku<small class="block font-body text-[11px] font-semibold text-muted tracking-[0.2px] mt-0.5">personal wiki</small></span>
             </a>
 
-            <a href="/search" class="mk-search-trigger" data-go-search>
+            <a href="/search" class="mk-search-trigger flex-1 max-w-[560px] flex items-center gap-2.75 px-4 py-2.75 rounded-[14px] border border-border bg-panel text-muted font-body font-semibold text-sm cursor-pointer hover:border-teal hover:text-text-base transition-all duration-180 no-underline" data-go-search>
                 <span>Search pages, tags, and links</span>
-                <span class="mk-kbd">Cmd K</span>
+                <span class="mk-kbd font-sans text-[11px] font-bold px-1.75 py-0.75 rounded-[6px] bg-panel2 border border-border">Cmd K</span>
             </a>
 
-            <div class="mk-topbar-right">
-                <div class="mk-seg" aria-label="Theme">
+            <div class="mk-topbar-right flex items-center gap-2.5 ml-auto">
+                <div class="mk-seg flex p-[3px] rounded-xl bg-panel border border-border" aria-label="Theme">
                     <button type="button" data-set-theme="light" aria-label="Use light theme">L</button>
                     <button type="button" data-set-theme="dark" aria-label="Use dark theme">D</button>
                 </div>
-                <button type="button" class="mk-icon-btn" @click="settingsOpen = true" aria-label="Open settings">&#9881;</button>
+                <button type="button" class="mk-icon-btn flex items-center justify-center w-10 h-10 rounded-xl border border-border bg-panel text-muted cursor-pointer transition-colors duration-180 hover:text-teal hover:border-teal" @click="settingsOpen = true" aria-label="Open settings">&#9881;</button>
             </div>
         </header>
 
-        <div class="mk-body">
-            <aside class="mk-sidebar">
+        <div class="mk-body relative z-0 flex flex-1 min-h-0">
+            <aside class="mk-sidebar w-72 flex-shrink-0 flex flex-col border-r border-border bg-sidebar backdrop-blur-[18px]">
                 {% set sec = section | default('files') %}
-                <div x-data="{ sidebarTab: '{{ sec }}' }">
+                <div class="flex flex-col flex-1 min-h-0" x-data="{ sidebarTab: '{{ sec }}' }">
                     <nav class="mk-tabs" aria-label="Sections" role="tablist">
                         <button type="button" role="tab" class="mk-tab {% if sec == 'files' %}is-active{% endif %}"
                                 :class="{ 'is-active': sidebarTab === 'files' }"
@@ -300,8 +322,9 @@
                     </div>
                   {% else %}
                     {% set folder_path = (prefix ~ '/' ~ node.name) if prefix else node.name %}
-                    <div class="tree-folder" x-data="{ open: true, dragOver: false }">
-                      <div class="mk-tree-folder tree-row tree-folder-row" :class="{ 'drag-over': dragOver }"
+                    {% set is_parent = (path is startingwith(folder_path ~ '/')) or (path == folder_path) %}
+                    <div class="tree-folder" x-data="{ open: (localStorage.getItem('folder:' + '{{ folder_path }}') === 'true') || {{ 'true' if is_parent else 'false' }}, dragOver: false }">
+                      <div class="mk-tree-folder tree-row tree-folder-row cursor-pointer select-none" :class="{ 'drag-over': dragOver }"
                            @dragover.prevent="dragOver = true"
                            @dragleave="dragOver = false"
                            @drop.prevent.stop="
@@ -315,8 +338,8 @@
                              fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
                                .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
                            "
-                           @click="open = !open">
-                        <span class="tree-chevron" x-text="open ? 'v' : '>'"></span>
+                           @click="open = !open; localStorage.setItem('folder:' + '{{ folder_path }}', open)">
+                        <span class="tree-chevron mr-1 text-[9px] text-muted/70 transition-transform duration-100 inline-block w-2.5" x-text="open ? '▼' : '▶'"></span>
                         <span class="tree-folder-name">{{ node.name }}</span>
                       </div>
                       <div class="tree-children" x-show="open" x-cloak>
@@ -326,7 +349,7 @@
                   {% endif %}
                 {% endmacro %}
 
-                    <div class="mk-sidebar-scroll">
+                    <div class="mk-sidebar-scroll flex-1 overflow-auto min-h-0 px-3 pb-3">
                       <section id="sidebar-files" class="mk-sidebar-panel" role="tabpanel"
                                x-show="sidebarTab === 'files'" :hidden="sidebarTab !== 'files'">
                         <button type="button" class="mk-newpage new-page-form" data-go-new
@@ -337,7 +360,7 @@
                         </button>
 
                         <div class="mk-section-label file-viewer-title">Files</div>
-                        <div class="nav-tree" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
+                        <div class="nav-tree w-max min-w-full" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
                              @dragover.prevent="dragOver = true"
                              @dragleave="dragOver = false"
                              @drop.prevent="

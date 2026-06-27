@@ -266,6 +266,7 @@ a { color: var(--teal); }
 
 /* ---- Rendered markdown (style comrak output inside .mk-prose) ---- */
 .mk-prose { font-size: 15.5px; line-height: 1.6; color: var(--text); }
+.mk-prose img { max-width: 100%; height: auto; border-radius: var(--radius-ctl); display: block; margin: 1.5rem auto; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
 .mk-prose h2 { margin: 34px 0 14px; font-family: var(--font-display); font-weight: 700; font-size: 27px; letter-spacing: -.3px; }
 .mk-prose h3 { margin: 26px 0 10px; font-family: var(--font-display); font-weight: 700; font-size: 21px; }
 .mk-prose p  { margin: 0 0 16px; }

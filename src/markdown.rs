@@ -217,20 +217,25 @@ fn set_html_block<'a>(node: &'a AstNode<'a>, html: String) {
 
 /// Render `[[Target]]` / `[[Target|label]]` as an anchor to the `/p/` page
 /// route, tagged `wikilink-missing` when `resolved` reports the slug is absent.
-fn anchor_html(target: &str, label: &str, resolved: &dyn Fn(&str) -> bool) -> String {
+fn anchor_html(target: &str, label: &str, resolved: &dyn Fn(&str) -> Option<String>) -> String {
     let label = if label.is_empty() { target } else { label };
     let norm = normalize_target(target, false);
-    let class = if resolved(&norm) {
-        "wikilink"
-    } else {
-        "wikilink wikilink-missing"
-    };
-    format!(
-        "<a href=\"{}\" class=\"{}\">{}</a>",
-        escape_attr(&format!("/p/{}", target.trim())),
-        class,
-        escape_text(label)
-    )
+    match resolved(&norm) {
+        Some(actual_path) => {
+            format!(
+                "<a href=\"{}\" class=\"wikilink\">{}</a>",
+                escape_attr(&format!("/p/{actual_path}")),
+                escape_text(label)
+            )
+        }
+        None => {
+            format!(
+                "<a href=\"{}\" class=\"wikilink wikilink-missing\">{}</a>",
+                escape_attr(&format!("/p/{}", target.trim())),
+                escape_text(label)
+            )
+        }
+    }
 }
 
 /// Render an inline `#tag` as a link to its `/tags/{tag}` filter page.
@@ -239,6 +244,68 @@ fn tag_html(tag: &str) -> String {
         "<a href=\"/tags/{}\" class=\"tag-inline\">#{}</a>",
         escape_attr(tag),
         escape_text(tag)
+    )
+}
+
+fn render_admonition(
+    info: &str,
+    literal: &str,
+    resolved: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    let ad_type = info.strip_prefix("ad-").unwrap_or(info);
+    let mut title = format!("{}{}", &ad_type[..1].to_uppercase(), &ad_type[1..]);
+    let mut actual_content = String::new();
+    let mut lines = literal.lines();
+
+    if let Some(first_line) = lines.next() {
+        let trimmed = first_line.trim_start();
+        if let Some(stripped) = trimmed.strip_prefix("title:") {
+            let t = stripped.trim();
+            let t_unquoted = if (t.starts_with('"') && t.ends_with('"'))
+                || (t.starts_with('\'') && t.ends_with('\''))
+            {
+                &t[1..t.len() - 1]
+            } else {
+                t
+            };
+            if !t_unquoted.is_empty() {
+                title = t_unquoted.to_string();
+            }
+            for line in lines {
+                actual_content.push_str(line);
+                actual_content.push('\n');
+            }
+        } else {
+            actual_content.push_str(first_line);
+            actual_content.push('\n');
+            for line in lines {
+                actual_content.push_str(line);
+                actual_content.push('\n');
+            }
+        }
+    }
+
+    let inner_html = render_html(&actual_content, resolved);
+
+    let (icon, border_class, title_class) = match ad_type.to_lowercase().as_str() {
+        "note" | "info" | "todo" => ("💡", "border-teal bg-teal/5", "text-teal"),
+        "warning" | "warn" | "caution" => {
+            ("⚠️", "border-amber-500 bg-amber-500/5", "text-amber-500")
+        }
+        "danger" | "error" | "fail" | "failure" => {
+            ("🛑", "border-rose-500 bg-rose-500/5", "text-rose-500")
+        }
+        _ => ("📝", "border-muted bg-muted/5", "text-muted"),
+    };
+
+    format!(
+        "<div class=\"admonition ad-{} border-l-4 p-3.5 my-4 {} rounded-r\">\n  <div class=\"admonition-title font-bold text-sm mb-1.5 {} flex items-center gap-1.5 select-none\">\n    <span>{}</span> {}</div>\n  <div class=\"admonition-content text-[13px] leading-relaxed\">\n    {}\n  </div>\n</div>",
+        ad_type,
+        border_class,
+        title_class,
+        icon,
+        escape_text(&title),
+        inner_html
     )
 }
 
@@ -262,7 +329,11 @@ fn tag_skipped<'a>(node: &'a AstNode<'a>) -> bool {
 /// `<img>` under `/assets/`; page embeds fall back to a page link; tags become
 /// links to `/tags/{tag}`. Surrounding text is HTML-escaped, since the result is
 /// injected verbatim as raw HTML.
-fn render_text_inlines(text: &str, resolved: &dyn Fn(&str) -> bool, allow_tags: bool) -> String {
+fn render_text_inlines(
+    text: &str,
+    resolved: &dyn Fn(&str) -> Option<String>,
+    allow_tags: bool,
+) -> String {
     struct Hit {
         start: usize,
         end: usize,
@@ -343,7 +414,10 @@ fn render_text_inlines(text: &str, resolved: &dyn Fn(&str) -> bool, allow_tags: 
 /// `resolved` is called with a normalized page slug (see [`normalize_target`]).
 /// Raw HTML passthrough is enabled — this is a single-user, local wiki over
 /// trusted files, so users may hand-write HTML in their notes.
-pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (String, Vec<Heading>) {
+pub fn render_html_with_toc(
+    body: &str,
+    resolved: &dyn Fn(&str) -> Option<String>,
+) -> (String, Vec<Heading>) {
     let arena = comrak::Arena::new();
     let mut options = comrak_options();
     options.render.r#unsafe = true;
@@ -360,6 +434,7 @@ pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (Str
             // Inline text carrying embeds and/or tags; bool = linkify tags here.
             InlineText(String, bool),
             Mermaid(String),
+            Admonition(String, String),
         }
         let allow_tags = !tag_skipped(node);
         let rewrite = match &node.data.borrow().value {
@@ -369,10 +444,15 @@ pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (Str
             {
                 Some(Rewrite::InlineText(t.to_string(), allow_tags))
             }
-            // Fenced ```mermaid blocks become <pre class="mermaid"> so mermaid.js
-            // renders them as diagrams instead of Prism highlighting them as code.
-            NodeValue::CodeBlock(cb) if cb.info.split_whitespace().next() == Some("mermaid") => {
-                Some(Rewrite::Mermaid(cb.literal.clone()))
+            NodeValue::CodeBlock(cb) => {
+                let info = cb.info.split_whitespace().next().unwrap_or("");
+                if info == "mermaid" {
+                    Some(Rewrite::Mermaid(cb.literal.clone()))
+                } else if info.starts_with("ad-") {
+                    Some(Rewrite::Admonition(info.to_string(), cb.literal.clone()))
+                } else {
+                    None
+                }
             }
             _ => None,
         };
@@ -391,6 +471,10 @@ pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (Str
                     format!("<pre class=\"mermaid\">{}</pre>", escape_text(&src)),
                 );
             }
+            Some(Rewrite::Admonition(info, literal)) => {
+                let html = render_admonition(&info, &literal, resolved);
+                set_html_block(node, html);
+            }
             None => {}
         }
     }
@@ -401,7 +485,7 @@ pub fn render_html_with_toc(body: &str, resolved: &dyn Fn(&str) -> bool) -> (Str
     (out, toc)
 }
 
-pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> bool) -> String {
+pub fn render_html(body: &str, resolved: &dyn Fn(&str) -> Option<String>) -> String {
     render_html_with_toc(body, resolved).0
 }
 
@@ -431,20 +515,26 @@ mod tests {
 
     #[test]
     fn test_render_page_link_resolved_vs_missing() {
-        let html = render_html("See [[Foo]] and [[Bar]].", &|norm| norm == "foo");
+        let html = render_html("See [[Foo]] and [[Bar]].", &|norm| {
+            if norm == "foo" {
+                Some("Foo".to_string())
+            } else {
+                None
+            }
+        });
         assert!(html.contains(r#"<a href="/p/Foo" class="wikilink">Foo</a>"#));
         assert!(html.contains(r#"<a href="/p/Bar" class="wikilink wikilink-missing">Bar</a>"#));
     }
 
     #[test]
     fn test_render_aliased_link() {
-        let html = render_html("[[Target|Display]]", &|_| true);
+        let html = render_html("[[Target|Display]]", &|_| Some("Target".to_string()));
         assert!(html.contains(r#"<a href="/p/Target" class="wikilink">Display</a>"#));
     }
 
     #[test]
     fn test_render_asset_embed() {
-        let html = render_html("![[diagram.png]]", &|_| false);
+        let html = render_html("![[diagram.png]]", &|_| None);
         assert!(html.contains(r#"<img src="/assets/diagram.png""#));
         // The leading `!` must not leak into the output.
         assert!(!html.contains(">!<"));
@@ -453,7 +543,9 @@ mod tests {
 
     #[test]
     fn test_render_inline_tag_linkified() {
-        let html = render_html("Tagged with #feature and #guide here.", &|_| true);
+        let html = render_html("Tagged with #feature and #guide here.", &|norm| {
+            Some(norm.to_string())
+        });
         assert!(html.contains(r#"<a href="/tags/feature" class="tag-inline">#feature</a>"#));
         assert!(html.contains(r#"<a href="/tags/guide" class="tag-inline">#guide</a>"#));
     }
@@ -462,7 +554,7 @@ mod tests {
     fn test_render_single_hash_no_double() {
         // A single `#docs` must not render the delimiter `#` plus the pill's `#`
         // (which read as `##docs`). Assert the exact surrounding text.
-        let html = render_html("end #docs", &|_| true);
+        let html = render_html("end #docs", &|norm| Some(norm.to_string()));
         assert!(html.contains(r#"end <a href="/tags/docs" class="tag-inline">#docs</a>"#));
         assert!(!html.contains("##docs"));
         assert!(!html.contains(r#"#<a href="/tags/docs""#));
@@ -471,33 +563,41 @@ mod tests {
     #[test]
     fn test_render_double_hash_not_linkified() {
         // `##docs` is not a valid tag and must stay literal.
-        let html = render_html("see ##docs here", &|_| true);
+        let html = render_html("see ##docs here", &|norm| Some(norm.to_string()));
         assert!(!html.contains("tag-inline"));
         assert!(html.contains("##docs"));
     }
 
     #[test]
     fn test_render_tag_keeps_open_paren_delim() {
-        let html = render_html("(#tag)", &|_| true);
+        let html = render_html("(#tag)", &|norm| Some(norm.to_string()));
         assert!(html.contains(r#"(<a href="/tags/tag" class="tag-inline">#tag</a>)"#));
     }
 
     #[test]
     fn test_render_tag_skipped_in_heading() {
-        let html = render_html("# Heading #notag\n", &|_| true);
+        let html = render_html("# Heading #notag\n", &|norm| Some(norm.to_string()));
         assert!(!html.contains("tag-inline"));
     }
 
     #[test]
     fn test_render_tag_and_wikilink_together() {
-        let html = render_html("See [[Index]] about #docs", &|_| true);
+        let html = render_html("See [[Index]] about #docs", &|norm| {
+            if norm == "index" {
+                Some("Index".to_string())
+            } else {
+                Some(norm.to_string())
+            }
+        });
         assert!(html.contains(r#"<a href="/p/Index" class="wikilink">Index</a>"#));
         assert!(html.contains(r#"<a href="/tags/docs" class="tag-inline">#docs</a>"#));
     }
 
     #[test]
     fn test_render_mermaid_block() {
-        let html = render_html("```mermaid\ngraph TD; A-->B;\n```", &|_| true);
+        let html = render_html("```mermaid\ngraph TD; A-->B;\n```", &|norm| {
+            Some(norm.to_string())
+        });
         assert!(html.contains(r#"<pre class="mermaid">"#));
         assert!(html.contains("graph TD; A--&gt;B;"));
         // Must not be emitted as a Prism-highlightable code block.
@@ -506,14 +606,20 @@ mod tests {
 
     #[test]
     fn test_render_non_mermaid_code_block_untouched() {
-        let html = render_html("```rust\nfn main() {}\n```", &|_| true);
+        let html = render_html("```rust\nfn main() {}\n```", &|norm| Some(norm.to_string()));
         assert!(html.contains("language-rust"));
         assert!(!html.contains(r#"class="mermaid""#));
     }
 
     #[test]
     fn test_render_page_embed_falls_back_to_link() {
-        let html = render_html("![[Page]]", &|_| true);
+        let html = render_html("![[Page]]", &|norm| {
+            if norm == "page" {
+                Some("Page".to_string())
+            } else {
+                Some(norm.to_string())
+            }
+        });
         assert!(html.contains(r#"<a href="/p/Page" class="wikilink">Page</a>"#));
         assert!(!html.contains("!<a"));
     }
@@ -521,7 +627,7 @@ mod tests {
     #[test]
     fn test_render_table() {
         let markdown = "| Col 1 | Col 2 |\n|---|---|\n| Val 1 | Val 2 |";
-        let html = render_html(markdown, &|_| true);
+        let html = render_html(markdown, &|norm| Some(norm.to_string()));
         assert!(html.contains("<table>"));
         assert!(html.contains("<th>Col 1</th>"));
         assert!(html.contains("<td>Val 1</td>"));
@@ -531,7 +637,7 @@ mod tests {
     fn test_render_html_with_toc_matches_heading_ids() {
         let (html, toc) = render_html_with_toc(
             "# Intro\n\n## Hello **World**\n\n### Hello `World`\n\n## Hello World\n",
-            &|_| true,
+            &|norm| Some(norm.to_string()),
         );
 
         assert!(html.contains(
@@ -565,5 +671,14 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn test_render_admonition_block() {
+        let md = "```ad-note\ntitle: Custom Note Title\nThis is **bold** text inside.\n```";
+        let html = render_html(md, &|norm| Some(norm.to_string()));
+        assert!(html.contains("admonition ad-note"));
+        assert!(html.contains("Custom Note Title"));
+        assert!(html.contains("<strong>bold</strong>"));
     }
 }

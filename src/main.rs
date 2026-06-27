@@ -14,7 +14,6 @@ use miku::markdown::{extract_title, parse_frontmatter, render_html_with_toc, Hea
 use minijinja::{context, Environment};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -397,6 +396,42 @@ fn template_seed(id: &str) -> &'static str {
     }
 }
 
+async fn load_slug_map(
+    db: &sqlx::PgPool,
+) -> Result<std::collections::HashMap<String, String>, AppError> {
+    let pages: Vec<(String, String)> = sqlx::query_as("SELECT slug, path FROM tb_pages")
+        .fetch_all(db)
+        .await
+        .context("Failed to load pages for wikilink resolution")?;
+
+    let aliases: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.alias, p.path FROM tb_page_aliases a JOIN tb_pages p ON a.page_id = p.id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let mut slug_map = std::collections::HashMap::new();
+    for (slug, p_path) in pages {
+        let path_without_md = if p_path.ends_with(".md") {
+            p_path[..p_path.len() - 3].to_string()
+        } else {
+            p_path
+        };
+        slug_map.insert(slug.to_lowercase(), path_without_md.clone());
+        slug_map.insert(path_without_md.to_lowercase(), path_without_md);
+    }
+    for (alias, p_path) in aliases {
+        let path_without_md = if p_path.ends_with(".md") {
+            p_path[..p_path.len() - 3].to_string()
+        } else {
+            p_path
+        };
+        slug_map.insert(alias.to_lowercase(), path_without_md);
+    }
+    Ok(slug_map)
+}
+
 // Render the read-only page view
 async fn page_view(path: String, state: AppState) -> Result<Response, AppError> {
     info!("Rendering page view for path: {}", path);
@@ -404,6 +439,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     let template = state.templates.get_template("page.html")?;
     let nav = nav_pages(&state.db).await?;
 
+    let path_segments: Vec<&str> = path.split('/').collect();
     if !file_path.exists() {
         let rendered = template.render(context! {
             title => format!("Create Page: {path}"),
@@ -420,6 +456,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
             frontmatter => serde_json::Value::Object(serde_json::Map::new()),
             breadcrumb_parent => breadcrumb_parent(&path),
             nav_pages => nav,
+            path_segments => path_segments,
         })?;
         return Ok(Html(rendered).into_response());
     }
@@ -435,13 +472,8 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     // Resolve wikilink targets against the index so missing pages render
     // distinctly. The index is a disposable read model; a freshly saved page
     // may briefly resolve as missing until the background indexer catches up.
-    let slugs: Vec<(String,)> = sqlx::query_as("SELECT slug FROM tb_pages")
-        .fetch_all(&state.db)
-        .await
-        .context("Failed to load page slugs for wikilink resolution")?;
-    let slug_set: HashSet<String> = slugs.into_iter().map(|(s,)| s).collect();
-
-    let (content_html, toc) = render_html_with_toc(body, &|norm| slug_set.contains(norm));
+    let slug_map = load_slug_map(&state.db).await?;
+    let (content_html, toc) = render_html_with_toc(body, &|norm| slug_map.get(norm).cloned());
 
     // Check has_mermaid
     let has_mermaid = raw_content.contains("```mermaid");
@@ -495,6 +527,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         frontmatter => frontmatter,
         breadcrumb_parent => breadcrumb_parent(&path),
         nav_pages => nav,
+        path_segments => path_segments,
     })?;
 
     Ok(Html(rendered).into_response())
@@ -548,13 +581,9 @@ async fn preview(
     State(state): State<AppState>,
     Form(form): Form<PreviewForm>,
 ) -> Result<impl IntoResponse, AppError> {
-    let slugs: Vec<(String,)> = sqlx::query_as("SELECT slug FROM tb_pages")
-        .fetch_all(&state.db)
-        .await
-        .context("Failed to load page slugs for preview wikilink resolution")?;
-    let slug_set: HashSet<String> = slugs.into_iter().map(|(s,)| s).collect();
+    let slug_map = load_slug_map(&state.db).await?;
     let (_, body) = parse_frontmatter(&form.body);
-    let (content_html, _) = render_html_with_toc(body, &|norm| slug_set.contains(norm));
+    let (content_html, _) = render_html_with_toc(body, &|norm| slug_map.get(norm).cloned());
 
     Ok(Html(content_html))
 }
@@ -853,7 +882,7 @@ mod tests {
             .expect("Failed to render template");
 
         assert!(rendered.contains("Test Title"));
-        assert!(rendered.contains("miku/TestPath.md"));
+        assert!(rendered.contains("miku"));
         assert!(!rendered.contains("mermaid.min.js"));
     }
 
@@ -916,11 +945,11 @@ mod tests {
             })
             .expect("Failed to render template");
 
-        assert!(rendered.contains("PROPERTIES"));
         assert!(rendered.contains("status"));
         assert!(rendered.contains("draft"));
-        // Sequence values render joined, not as a debug list.
-        assert!(rendered.contains("miku, wiki"));
+        // Sequence values render as chips.
+        assert!(rendered.contains("miku"));
+        assert!(rendered.contains("wiki"));
     }
 
     #[test]
@@ -963,17 +992,12 @@ mod tests {
         assert!(rendered.contains("x-data=\"{ collapsed: false }\""));
         assert!(rendered.contains("mk-collapse-chevron"));
 
-        // Verify the reordered elements
-        let idx_properties = rendered.find("PROPERTIES").expect("PROPERTIES not found");
+        // Verify the reordered elements (PAGE INFO then ON THIS PAGE)
         let idx_page_info = rendered.find("PAGE INFO").expect("PAGE INFO not found");
         let idx_on_this_page = rendered
             .find("ON THIS PAGE")
             .expect("ON THIS PAGE not found");
 
-        assert!(
-            idx_properties < idx_page_info,
-            "PROPERTIES should be rendered before PAGE INFO"
-        );
         assert!(
             idx_page_info < idx_on_this_page,
             "PAGE INFO should be rendered before ON THIS PAGE"
@@ -1029,9 +1053,9 @@ mod tests {
             })
             .expect("Failed to render template");
 
-        assert!(rendered.contains("class=\"mk-edit\""));
-        assert!(rendered.contains("class=\"mk-edit-split\""));
-        assert!(rendered.contains("class=\"mk-preview mk-prose\""));
+        assert!(rendered.contains("mk-edit"));
+        assert!(rendered.contains("mk-edit-split"));
+        assert!(rendered.contains("mk-preview mk-prose"));
         assert!(rendered.contains("name=\"loaded_hash\" value=\"abc\""));
         assert!(rendered.contains("fetch('/preview'"));
         assert!(rendered.contains("action=\"/p/TestPath\" method=\"POST\""));

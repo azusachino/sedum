@@ -5,21 +5,30 @@ Miku - #{{ tag }}
 {% endblock %}
 
 {% block content %}
-<main class="mk-page">
-    <h1>#{{ tag }}</h1>
-    <p class="sub"><strong class="teal">{{ pages | length }}</strong> pages tagged #{{ tag }}.</p>
+<main class="max-w-[760px] mx-auto px-6 py-10 md:py-16">
+    <div class="flex items-center gap-3.5 mb-2">
+        <span class="px-2.5 py-1 rounded-xl text-xs font-bold bg-teal/10 text-teal border border-teal/25 select-none" aria-hidden="true">TAG</span>
+        <h1 class="font-display font-bold text-3xl tracking-tight">#{{ tag }}</h1>
+    </div>
+    <p class="text-sm text-muted/80 mb-8 font-medium">Found <strong class="text-teal font-extrabold">{{ pages | length }}</strong> notes tagged with #{{ tag }}.</p>
 
     {% if pages %}
-    <div class="mk-grid2">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {% for p in pages %}
-        <a href="/p/{{ p.path }}" class="mk-pagecard">
-            <span class="ttl">{{ p.title }}</span>
-            <span class="desc">miku/{{ p.path }}.md</span>
+        <a href="/p/{{ p.path }}" class="group block p-5 rounded-2xl border border-border/15 bg-panel/10 hover:bg-panel/20 hover:border-teal/30 hover:shadow-[0_8px_24px_-10px_var(--tealglow)] transition-all duration-200 no-underline">
+            <div class="flex items-center gap-1.5 mb-1.5">
+                <span class="text-teal text-lg group-hover:scale-110 transition-transform" aria-hidden="true">📄</span>
+                <span class="font-display font-bold text-base text-text-base group-hover:text-teal transition-colors">{{ p.title }}</span>
+            </div>
+            <p class="font-mono text-[10px] text-muted/60 truncate bg-panel/30 border border-border/5 px-2 py-0.5 rounded-md inline-block">miku/{{ p.path }}.md</p>
         </a>
         {% endfor %}
     </div>
     {% else %}
-    <p class="sub">No pages with this tag.</p>
+        <div class="p-10 text-center border border-dashed border-border/20 rounded-2xl bg-panel/5">
+            <span class="text-muted/40 text-3xl block mb-2">📄</span>
+            <p class="text-sm text-muted font-semibold">No notes found.</p>
+        </div>
     {% endif %}
 </main>
 {% endblock %}

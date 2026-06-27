@@ -7,24 +7,85 @@ Miku - {{ path }}
 {% block content %}
 <main class="mk-read">
     <article class="mk-article" data-page-path="{{ path }}">
-        <nav class="mk-breadcrumb" aria-label="Breadcrumb">
-            {% if breadcrumb_parent %}
-            <span>{{ breadcrumb_parent }}</span>
-            <span>/</span>
+        <nav class="mk-breadcrumb flex items-center gap-1.5 text-xs text-muted mb-5" aria-label="Breadcrumb">
+            <span class="opacity-60">miku</span>
+            {% if path_segments is defined and path_segments %}
+                {% for part in path_segments %}
+                    <span class="opacity-45">/</span>
+                    {% if loop.last %}
+                        <span class="here text-teal font-semibold">{{ title }}</span>
+                    {% else %}
+                        <span class="opacity-60">{{ part }}</span>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <span class="opacity-45">/</span>
+                <span class="here text-teal font-semibold">{{ title }}</span>
             {% endif %}
-            <span class="here">{{ title }}</span>
-            <span class="mk-pathchip">miku/{{ path }}.md</span>
-            <span class="mk-synced" data-sync-indicator hidden><i aria-hidden="true"></i><span>synced</span></span>
+            <span class="mk-synced ml-2" data-sync-indicator hidden><i aria-hidden="true"></i><span>synced</span></span>
         </nav>
 
-        <div class="mk-title-row">
-            <h1 class="mk-h1">{{ title }}</h1>
+        <div class="mk-title-row flex items-start justify-between gap-5 mb-2">
+            <h1 class="flex items-center gap-3">
+                <span class="text-teal/80 text-[32px] leading-none shrink-0 select-none" aria-hidden="true">📄</span>
+                <span class="mk-h1">{{ title }}</span>
+            </h1>
             {% if exists %}
-            <div class="mk-title-actions">
+            <div class="mk-title-actions shrink-0">
                 <a href="/p/{{ path }}/edit" class="mk-btn mk-btn-primary">Edit</a>
             </div>
             {% endif %}
         </div>
+
+        {% if exists %}
+        <ul class="list-disc pl-5 space-y-1 text-xs text-muted/70 mb-6 border-b border-border/10 pb-4">
+            <!-- Note Type Badge -->
+            <li class="inline-flex items-center gap-1.5 bg-teal/5 text-teal px-2 py-0.5 rounded border border-teal/15 font-semibold text-[11px] list-none ml-[-20px] mb-2">
+                <span class="text-[10px]">📄</span> Text Note
+            </li>
+            <!-- Word Count -->
+            <li>
+                <span>{{ word_count }}</span> words
+            </li>
+            <!-- Updated Time -->
+            <li>Updated {{ updated }}</li>
+
+            <!-- Tags if any -->
+            {% if frontmatter.tags is defined and frontmatter.tags %}
+                {% if frontmatter.tags is string %}
+                    <li>
+                        Tags: 
+                        <a href="/tags/{{ frontmatter.tags }}" class="bg-tealsoft hover:bg-tealsoft/80 text-teal px-1.5 py-0.5 rounded font-bold text-[10px] uppercase tracking-wider border border-teal/20 transition-all">
+                            #{{ frontmatter.tags }}
+                        </a>
+                    </li>
+                {% elif frontmatter.tags is sequence %}
+                    <li>
+                        Tags: 
+                        <span class="flex flex-wrap gap-1.5 inline-flex ml-1">
+                            {% for tag in frontmatter.tags %}
+                                <a href="/tags/{{ tag }}" class="bg-tealsoft hover:bg-tealsoft/80 text-teal px-1.5 py-0.5 rounded font-bold text-[10px] uppercase tracking-wider border border-teal/20 transition-all">
+                                    #{{ tag }}
+                                </a>
+                            {% endfor %}
+                        </span>
+                    </li>
+                {% endif %}
+            {% endif %}
+
+            <!-- Frontmatter Key-Value Properties -->
+            {% if frontmatter %}
+                {% for key, val in frontmatter | items %}
+                    {% if key != 'title' and key != 'description' and key != 'tags' %}
+                        <li>
+                            <span class="opacity-60 font-semibold">{{ key }}:</span>
+                            <span class="text-text-base font-semibold">{{ val }}</span>
+                        </li>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        </ul>
+        {% endif %}
 
         {% if exists and frontmatter.description is defined and frontmatter.description %}
         <p class="mk-lede">{{ frontmatter.description }}</p>
@@ -55,19 +116,6 @@ Miku - {{ path }}
     </article>
 
     <aside class="mk-rail">
-        {% if exists and frontmatter %}
-        <section class="mk-card" x-data="{ collapsed: false }" :class="{ 'is-collapsed': collapsed }">
-            <div class="mk-card-label" @click="collapsed = !collapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                <span>PROPERTIES</span>
-                <span class="mk-collapse-chevron" :class="{ 'is-collapsed': collapsed }"></span>
-            </div>
-            <div x-show="!collapsed" x-transition>
-                {% for key, value in frontmatter | items %}
-                <div class="mk-kv"><span class="k">{{ key }}</span><span class="v">{% if value is sequence %}{{ value | join(', ') }}{% else %}{{ value }}{% endif %}</span></div>
-                {% endfor %}
-            </div>
-        </section>
-        {% endif %}
 
         <section class="mk-card" x-data="{ collapsed: false }" :class="{ 'is-collapsed': collapsed }">
             <div class="mk-card-label" @click="collapsed = !collapsed" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">

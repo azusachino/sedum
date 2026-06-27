@@ -16,16 +16,16 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src \
     && echo 'fn main() {}' > src/main.rs \
     && echo '' > src/lib.rs \
-    && cargo build --release --locked \
+    && cargo build --locked \
     && rm -rf src \
-        target/release/miku target/release/deps/miku-* \
-        target/release/deps/libmiku-* target/release/.fingerprint/miku-*
+        target/debug/miku target/debug/deps/miku-* \
+        target/debug/deps/libmiku-* target/debug/.fingerprint/miku-*
 
 # Real sources. migrations/ is embedded at compile time by sqlx::migrate!.
 COPY src ./src
 COPY migrations ./migrations
 COPY static ./static
-RUN cargo build --release --locked --bin miku
+RUN cargo build --locked --bin miku
 
 # ---- Runtime stage ----
 FROM debian:bookworm-slim
@@ -42,7 +42,7 @@ WORKDIR /app
 # minijinja path_loader, static via ServeDir). The miku/ content dir is
 # provided at runtime as a bind mount. The binary lives on PATH so it does
 # not collide with the /app/miku content directory.
-COPY --from=builder /build/target/release/miku /usr/local/bin/miku
+COPY --from=builder /build/target/debug/miku /usr/local/bin/miku
 COPY src/templates /app/src/templates
 COPY static /app/static
 
