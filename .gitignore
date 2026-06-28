@@ -29,3 +29,6 @@ __MACOSX
 # Runtime soft-delete trash in the content vault
 miku/.trash/
 
+# Local scale-test corpus (cloned, not source)
+miku/geektime-docs/
+
