@@ -19,3 +19,13 @@ Thumbs.db
 .env.local
 .env.*.local
 dev.env
+
+# macos
+__MACOSX
+
+# Agent session logs (ephemeral)
+.agents/sessions/
+
+# Runtime soft-delete trash in the content vault
+miku/.trash/
+
