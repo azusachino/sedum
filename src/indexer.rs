@@ -483,17 +483,26 @@ impl IndexerQueue {
             affected.push(stripped.to_string());
         };
 
-        let mut tx = db_pool.begin().await?;
-
         // 1. Process deletions
         for path in to_delete {
             let path_str = path.to_string_lossy().to_string();
             info!("Indexing: removing page={}", path_str);
-            sqlx::query("DELETE FROM tb_pages WHERE path = $1")
-                .bind(&path_str)
-                .execute(&mut *tx)
-                .await?;
-            push_affected(&mut affected, &path_str);
+
+            let result = async {
+                let mut tx = db_pool.begin().await?;
+                sqlx::query("DELETE FROM tb_pages WHERE path = $1")
+                    .bind(&path_str)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                Result::<()>::Ok(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => push_affected(&mut affected, &path_str),
+                Err(e) => error!("Failed to remove indexed page {}: {:?}", path_str, e),
+            }
         }
 
         // 2. Process upserts
@@ -503,11 +512,21 @@ impl IndexerQueue {
 
             if !file_path.exists() {
                 // If it was modified but deleted before we read it
-                sqlx::query("DELETE FROM tb_pages WHERE path = $1")
-                    .bind(&path_str)
-                    .execute(&mut *tx)
-                    .await?;
-                push_affected(&mut affected, &path_str);
+                let result = async {
+                    let mut tx = db_pool.begin().await?;
+                    sqlx::query("DELETE FROM tb_pages WHERE path = $1")
+                        .bind(&path_str)
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await?;
+                    Result::<()>::Ok(())
+                }
+                .await;
+
+                match result {
+                    Ok(()) => push_affected(&mut affected, &path_str),
+                    Err(e) => error!("Failed to remove vanished page {}: {:?}", path_str, e),
+                }
                 continue;
             }
 
@@ -536,102 +555,111 @@ impl IndexerQueue {
                 .map(|s| s.to_lowercase())
                 .unwrap_or_else(|| path_str.clone());
 
-            // Upsert tb_pages
-            let row: (i64,) = sqlx::query_as(
-                "INSERT INTO tb_pages (path, slug, title, frontmatter, has_mermaid, mtime, body_tsv) \
-                 VALUES ($1, $2, $3, $4, $5, $6, setweight(to_tsvector('english', COALESCE($3, '')), 'A') || setweight(to_tsvector('english', COALESCE($7, '')), 'B')) \
-                 ON CONFLICT (path) \
-                 DO UPDATE SET slug = EXCLUDED.slug, title = EXCLUDED.title, frontmatter = EXCLUDED.frontmatter, \
-                               has_mermaid = EXCLUDED.has_mermaid, mtime = EXCLUDED.mtime, body_tsv = EXCLUDED.body_tsv \
-                 RETURNING id"
-            )
-            .bind(&path_str)
-            .bind(&slug)
-            .bind(&page_data.metadata.title)
-            .bind(&page_data.frontmatter_json)
-            .bind(page_data.metadata.has_mermaid)
-            .bind(mtime)
-            .bind(&page_data.body)
-            .fetch_one(&mut *tx)
-            .await?;
-            let page_id = row.0;
+            let result = async {
+                let mut tx = db_pool.begin().await?;
 
-            // Clear old links, tags, aliases
-            sqlx::query("DELETE FROM tb_links WHERE src_id = $1")
-                .bind(page_id)
-                .execute(&mut *tx)
+                // Upsert tb_pages
+                let row: (i64,) = sqlx::query_as(
+                    "INSERT INTO tb_pages (path, slug, title, frontmatter, has_mermaid, mtime, body_tsv) \
+                     VALUES ($1, $2, $3, $4, $5, $6, setweight(to_tsvector('english', COALESCE($3, '')), 'A') || setweight(to_tsvector('english', COALESCE($7, '')), 'B')) \
+                     ON CONFLICT (path) \
+                     DO UPDATE SET slug = EXCLUDED.slug, title = EXCLUDED.title, frontmatter = EXCLUDED.frontmatter, \
+                                   has_mermaid = EXCLUDED.has_mermaid, mtime = EXCLUDED.mtime, body_tsv = EXCLUDED.body_tsv \
+                     RETURNING id"
+                )
+                .bind(&path_str)
+                .bind(&slug)
+                .bind(&page_data.metadata.title)
+                .bind(&page_data.frontmatter_json)
+                .bind(page_data.metadata.has_mermaid)
+                .bind(mtime)
+                .bind(&page_data.body)
+                .fetch_one(&mut *tx)
                 .await?;
+                let page_id = row.0;
 
-            sqlx::query("DELETE FROM tb_tags WHERE page_id = $1")
-                .bind(page_id)
-                .execute(&mut *tx)
-                .await?;
-
-            sqlx::query("DELETE FROM tb_page_aliases WHERE page_id = $1")
-                .bind(page_id)
-                .execute(&mut *tx)
-                .await?;
-
-            // Insert tags
-            for tag in page_data.metadata.tags {
-                sqlx::query("INSERT INTO tb_tags (page_id, tag) VALUES ($1, $2) ON CONFLICT (page_id, tag) DO NOTHING")
+                // Clear old links, tags, aliases
+                sqlx::query("DELETE FROM tb_links WHERE src_id = $1")
                     .bind(page_id)
-                    .bind(&tag)
                     .execute(&mut *tx)
                     .await?;
-            }
 
-            // Insert aliases
-            for alias in page_data.metadata.aliases {
-                sqlx::query("INSERT INTO tb_page_aliases (page_id, alias) VALUES ($1, $2) ON CONFLICT (page_id, alias) DO NOTHING")
+                sqlx::query("DELETE FROM tb_tags WHERE page_id = $1")
                     .bind(page_id)
-                    .bind(&alias)
                     .execute(&mut *tx)
                     .await?;
-            }
 
-            // Insert links (we'll resolve target_ids after all pages are saved/indexed)
-            for link in page_data.metadata.links {
-                let alias_opt = link.alias.as_deref();
+                sqlx::query("DELETE FROM tb_page_aliases WHERE page_id = $1")
+                    .bind(page_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                // Insert tags
+                for tag in &page_data.metadata.tags {
+                    sqlx::query("INSERT INTO tb_tags (page_id, tag) VALUES ($1, $2) ON CONFLICT (page_id, tag) DO NOTHING")
+                        .bind(page_id)
+                        .bind(tag)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+
+                // Insert aliases
+                for alias in &page_data.metadata.aliases {
+                    sqlx::query("INSERT INTO tb_page_aliases (page_id, alias) VALUES ($1, $2) ON CONFLICT (page_id, alias) DO NOTHING")
+                        .bind(page_id)
+                        .bind(alias)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+
+                // Insert links (we'll resolve target_ids after all pages are saved/indexed)
+                for link in &page_data.metadata.links {
+                    let alias_opt = link.alias.as_deref();
+                    sqlx::query(
+                        "INSERT INTO tb_links (src_id, kind, is_embed, target, target_norm, target_id, alias) \
+                         VALUES ($1, $2, $3, $4, $5, NULL, $6) \
+                         ON CONFLICT (src_id, kind, target_norm, is_embed) DO NOTHING"
+                    )
+                    .bind(page_id)
+                    .bind(&link.kind)
+                    .bind(link.is_embed)
+                    .bind(&link.target)
+                    .bind(&link.target_norm)
+                    .bind(alias_opt)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                // Resolve this page's outgoing links against pages that already
+                // exist, then resolve older dangling links pointing here.
                 sqlx::query(
-                    "INSERT INTO tb_links (src_id, kind, is_embed, target, target_norm, target_id, alias) \
-                     VALUES ($1, $2, $3, $4, $5, NULL, $6) \
-                     ON CONFLICT (src_id, kind, target_norm, is_embed) DO NOTHING"
+                    "UPDATE tb_links l \
+                     SET target_id = p.id \
+                     FROM tb_pages p \
+                     WHERE l.src_id = $1 AND l.kind = 'page' AND l.target_id IS NULL AND l.target_norm = p.slug",
                 )
                 .bind(page_id)
-                .bind(&link.kind)
-                .bind(link.is_embed)
-                .bind(&link.target)
-                .bind(&link.target_norm)
-                .bind(alias_opt)
                 .execute(&mut *tx)
                 .await?;
+
+                sqlx::query(
+                    "UPDATE tb_links SET target_id = $1 WHERE kind = 'page' AND target_norm = $2 AND target_id IS NULL"
+                )
+                .bind(page_id)
+                .bind(&slug)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+                Result::<()>::Ok(())
             }
+            .await;
 
-            // Resolve any dangling links pointing to this page
-            sqlx::query(
-                "UPDATE tb_links SET target_id = $1 WHERE kind = 'page' AND target_norm = $2 AND target_id IS NULL"
-            )
-            .bind(page_id)
-            .bind(&slug)
-            .execute(&mut *tx)
-            .await?;
-
-            push_affected(&mut affected, &path_str);
+            match result {
+                Ok(()) => push_affected(&mut affected, &path_str),
+                Err(e) => error!("Failed to index page {}: {:?}", path_str, e),
+            }
         }
-
-        // 3. Resolve target_ids of all dangling links pointing to all pages
-        // This is a bulk re-resolve query for any dangling links
-        sqlx::query(
-            "UPDATE tb_links l \
-             SET target_id = p.id \
-             FROM tb_pages p \
-             WHERE l.kind = 'page' AND l.target_id IS NULL AND l.target_norm = p.slug",
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
         Ok(affected)
     }
 
