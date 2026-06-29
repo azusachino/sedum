@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn test_prepare_page_index_data_sanitizes_nul_and_invalid_utf8() {
         let raw_content =
-            decode_indexable_markdown(include_bytes!("../tests/fixtures/indexer/nul_invalid.md"));
+            decode_indexable_markdown(include_bytes!("fixtures/indexer/nul_invalid.md"));
         let page_data = prepare_page_index_data("nul_invalid.md", &raw_content);
         let frontmatter =
             serde_json::to_string(&page_data.frontmatter_json).expect("frontmatter is JSON");
