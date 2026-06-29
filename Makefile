@@ -2,7 +2,7 @@
 # `nix develop --command`; inside it (IN_NIX_SHELL set), run directly.
 NIX_RUN := $(if $(IN_NIX_SHELL),,nix develop --command )
 
-.PHONY: fmt fmt-check lint test check validate run clean daily stack-up stack-down stack-build stack-logs
+.PHONY: fmt fmt-check lint test check validate bench run clean daily stack-up stack-down stack-build stack-logs
 
 fmt:
 	$(NIX_RUN)cargo fmt
@@ -22,6 +22,9 @@ check: fmt-check lint test
 
 validate: check
 	$(NIX_RUN)cargo build --release
+
+bench:
+	$(NIX_RUN)uv run python scripts/index_scale_test.py
 
 run:
 	$(NIX_RUN)cargo run

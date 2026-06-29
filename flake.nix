@@ -21,6 +21,8 @@
             clippy
             # python scripting/automation (run via `uv run`, replaces bash glue)
             uv
+            # HTTP smoke/load probe used by make bench when a server is running
+            oha
             # formatting
             prettier
           ];

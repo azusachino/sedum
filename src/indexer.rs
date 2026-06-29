@@ -6,7 +6,7 @@ use comrak::nodes::NodeValue;
 use notify::Watcher;
 use regex::Regex;
 use sqlx::PgPool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io;
@@ -19,6 +19,9 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
+
+pub const BULK_SSE_EVENT: &str = "__miku_bulk_index_refresh__";
+const DEFAULT_BULK_SSE_THRESHOLD: usize = 256;
 
 // Skip dot-dirs/files (.trash soft-delete archive, .git, etc.) anywhere in the
 // relative path so trashed pages and VCS metadata never enter the index.
@@ -303,8 +306,15 @@ impl IndexerQueue {
         let events_clone = events.clone();
         let reconcile_queued_for_consumer = Arc::clone(&reconcile_queued);
         tokio::spawn(async move {
+            let mut index_failures = HashMap::new();
             info!("Starting startup reconcile sweep...");
-            if let Err(e) = Self::reconcile_all(&db_clone, &content_root_clone, &events_clone).await
+            if let Err(e) = Self::reconcile_all(
+                &db_clone,
+                &content_root_clone,
+                &events_clone,
+                &mut index_failures,
+            )
+            .await
             {
                 error!("Startup reconcile sweep failed: {:?}", e);
             } else {
@@ -318,6 +328,7 @@ impl IndexerQueue {
                 content_root_clone,
                 events_clone,
                 reconcile_queued_for_consumer,
+                index_failures,
             )
             .await;
         });
@@ -411,6 +422,25 @@ impl IndexerQueue {
             .map_or_else(|| Duration::from_secs(30), Duration::from_secs)
     }
 
+    fn bulk_sse_threshold() -> usize {
+        env::var("MIKU_BULK_SSE_THRESHOLD")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|threshold| *threshold > 0)
+            .unwrap_or(DEFAULT_BULK_SSE_THRESHOLD)
+    }
+
+    fn broadcast_affected(events: &broadcast::Sender<String>, affected: Vec<String>) {
+        if affected.len() > Self::bulk_sse_threshold() {
+            let _ = events.send(BULK_SSE_EVENT.to_string());
+            return;
+        }
+
+        for path in affected {
+            let _ = events.send(path);
+        }
+    }
+
     fn try_queue_reconcile(
         sender: &mpsc::Sender<WatcherEvent>,
         reconcile_queued: &AtomicBool,
@@ -438,6 +468,7 @@ impl IndexerQueue {
         content_root: PathBuf,
         events: broadcast::Sender<String>,
         reconcile_queued: Arc<AtomicBool>,
+        mut index_failures: HashMap<PathBuf, i64>,
     ) {
         let mut debounce_buffer = HashSet::new();
         let debounce_duration = Duration::from_millis(300);
@@ -445,7 +476,9 @@ impl IndexerQueue {
         while let Some(event) = receiver.recv().await {
             if event == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                 info!("Manual reconcile event triggered, running reconciliation...");
-                if let Err(e) = Self::reconcile_all(&db_pool, &content_root, &events).await {
+                if let Err(e) =
+                    Self::reconcile_all(&db_pool, &content_root, &events, &mut index_failures).await
+                {
                     error!("Reconciliation sweep failed: {:?}", e);
                 }
                 reconcile_queued.store(false, Ordering::Release);
@@ -458,7 +491,9 @@ impl IndexerQueue {
             while let Ok(evt) = receiver.try_recv() {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
-                    let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
+                    let _ =
+                        Self::reconcile_all(&db_pool, &content_root, &events, &mut index_failures)
+                            .await;
                     reconcile_queued.store(false, Ordering::Release);
                     break;
                 }
@@ -476,7 +511,9 @@ impl IndexerQueue {
             while let Ok(evt) = receiver.try_recv() {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
-                    let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
+                    let _ =
+                        Self::reconcile_all(&db_pool, &content_root, &events, &mut index_failures)
+                            .await;
                     reconcile_queued.store(false, Ordering::Release);
                     break;
                 }
@@ -487,17 +524,14 @@ impl IndexerQueue {
             if !debounce_buffer.is_empty() {
                 let batch: Vec<WatcherEvent> = debounce_buffer.drain().collect();
                 info!("Processing batch of {} filesystem events...", batch.len());
-                match Self::process_batch(batch, &db_pool, &content_root).await {
+                match Self::process_batch(batch, &db_pool, &content_root, &mut index_failures).await
+                {
                     // Stream changed page paths to connected browsers AFTER the
                     // index commit succeeds. This is a read-only broadcast: it
                     // does not touch the Postgres index (single-writer invariant
                     // is preserved). `send` errors only when there are no
                     // subscribers, which is fine to ignore.
-                    Ok(affected) => {
-                        for path in affected {
-                            let _ = events.send(path);
-                        }
-                    }
+                    Ok(affected) => Self::broadcast_affected(&events, affected),
                     Err(e) => error!("Failed to index batch: {:?}", e),
                 }
             }
@@ -511,6 +545,7 @@ impl IndexerQueue {
         batch: Vec<WatcherEvent>,
         db_pool: &PgPool,
         content_root: &PathBuf,
+        index_failures: &mut HashMap<PathBuf, i64>,
     ) -> Result<Vec<String>> {
         let mut to_upsert = Vec::new();
         let mut to_delete = Vec::new();
@@ -548,7 +583,10 @@ impl IndexerQueue {
             .await;
 
             match result {
-                Ok(()) => push_affected(&mut affected, &path_str),
+                Ok(()) => {
+                    index_failures.remove(&path);
+                    push_affected(&mut affected, &path_str);
+                }
                 Err(e) => error!("Failed to remove indexed page {}: {:?}", path_str, e),
             }
         }
@@ -572,20 +610,14 @@ impl IndexerQueue {
                 .await;
 
                 match result {
-                    Ok(()) => push_affected(&mut affected, &path_str),
+                    Ok(()) => {
+                        index_failures.remove(&path);
+                        push_affected(&mut affected, &path_str);
+                    }
                     Err(e) => error!("Failed to remove vanished page {}: {:?}", path_str, e),
                 }
                 continue;
             }
-
-            info!("Indexing: parsing/saving page={}", path_str);
-            let raw_content = match fs::read(&file_path) {
-                Ok(bytes) => decode_indexable_markdown(&bytes),
-                Err(e) => {
-                    error!("Failed to read file {:?}: {:?}", file_path, e);
-                    continue;
-                }
-            };
 
             let mtime = match fs::metadata(&file_path) {
                 Ok(meta) => meta.modified().map_or(0, |time| {
@@ -594,6 +626,24 @@ impl IndexerQueue {
                         .unwrap_or(0)
                 }),
                 Err(_) => 0,
+            };
+
+            if index_failures
+                .get(&path)
+                .is_some_and(|failed_mtime| *failed_mtime == mtime)
+            {
+                warn!("Indexing: skipping quarantined unchanged page={}", path_str);
+                continue;
+            }
+
+            info!("Indexing: parsing/saving page={}", path_str);
+            let raw_content = match fs::read(&file_path) {
+                Ok(bytes) => decode_indexable_markdown(&bytes),
+                Err(e) => {
+                    error!("Failed to read file {:?}: {:?}", file_path, e);
+                    index_failures.insert(path, mtime);
+                    continue;
+                }
             };
 
             let page_data = prepare_page_index_data(&path_str, &raw_content);
@@ -704,8 +754,14 @@ impl IndexerQueue {
             .await;
 
             match result {
-                Ok(()) => push_affected(&mut affected, &path_str),
-                Err(e) => error!("Failed to index page {}: {:?}", path_str, e),
+                Ok(()) => {
+                    index_failures.remove(&path);
+                    push_affected(&mut affected, &path_str);
+                }
+                Err(e) => {
+                    error!("Failed to index page {}: {:?}", path_str, e);
+                    index_failures.insert(path, mtime);
+                }
             }
         }
         Ok(affected)
@@ -715,6 +771,7 @@ impl IndexerQueue {
         db_pool: &PgPool,
         content_root: &Path,
         events: &broadcast::Sender<String>,
+        index_failures: &mut HashMap<PathBuf, i64>,
     ) -> Result<()> {
         info!(
             "Walking content root {:?} to reconcile page database index...",
@@ -803,10 +860,10 @@ impl IndexerQueue {
             // (mtime-newer upserts, missing deletions, new files), so broadcast
             // them too. This is the sole SSE trigger under podman bind mounts,
             // where inotify events do not propagate to the watcher.
-            let affected = Self::process_batch(batch, db_pool, &content_root.to_path_buf()).await?;
-            for path in affected {
-                let _ = events.send(path);
-            }
+            let affected =
+                Self::process_batch(batch, db_pool, &content_root.to_path_buf(), index_failures)
+                    .await?;
+            Self::broadcast_affected(events, affected);
         } else {
             info!("Database index is fully in sync with filesystem.");
         }
@@ -850,5 +907,25 @@ mod tests {
         assert_eq!(IndexerQueue::reconcile_interval(), Duration::from_secs(30));
 
         env::remove_var("MIKU_RECONCILE_INTERVAL_SECS");
+    }
+
+    #[test]
+    fn test_bulk_sse_threshold_defaults_and_reads_env() {
+        env::remove_var("MIKU_BULK_SSE_THRESHOLD");
+        assert_eq!(
+            IndexerQueue::bulk_sse_threshold(),
+            DEFAULT_BULK_SSE_THRESHOLD
+        );
+
+        env::set_var("MIKU_BULK_SSE_THRESHOLD", "42");
+        assert_eq!(IndexerQueue::bulk_sse_threshold(), 42);
+
+        env::set_var("MIKU_BULK_SSE_THRESHOLD", "0");
+        assert_eq!(
+            IndexerQueue::bulk_sse_threshold(),
+            DEFAULT_BULK_SSE_THRESHOLD
+        );
+
+        env::remove_var("MIKU_BULK_SSE_THRESHOLD");
     }
 }

@@ -702,7 +702,7 @@
                     const article = document.querySelector(".mk-article[data-page-path]");
                     if (article) {
                         const pagePath = article.getAttribute("data-page-path");
-                        if (event.data === pagePath) {
+                        if (event.data === "__miku_bulk_index_refresh__" || event.data === pagePath) {
                             refreshArticle(pagePath);
                         }
                     }

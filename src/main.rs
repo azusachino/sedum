@@ -1255,6 +1255,7 @@ mod tests {
         // unescaped path the SSE broadcast sends. Assert on the escaped form.
         assert!(rendered.contains("data-page-path=\"Notes&#x2f;Daily\""));
         assert!(rendered.contains("new EventSource(\"/events\")"));
+        assert!(rendered.contains("__miku_bulk_index_refresh__"));
         assert!(rendered.contains("class=\"mk-synced\""));
         assert!(rendered.contains("data-sync-indicator"));
     }
