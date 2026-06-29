@@ -81,6 +81,66 @@ struct PageMetadata {
     aliases: HashSet<String>,
 }
 
+struct PageIndexData {
+    frontmatter_json: serde_json::Value,
+    metadata: PageMetadata,
+    body: String,
+}
+
+fn push_without_nuls(out: &mut String, value: &str) {
+    out.extend(value.chars().filter(|c| *c != '\0'));
+}
+
+fn sanitize_text_for_postgres(value: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len());
+    push_without_nuls(&mut sanitized, value);
+    sanitized
+}
+
+fn sanitize_json_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => {
+            *s = sanitize_text_for_postgres(s);
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                sanitize_json_strings(value);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                sanitize_json_strings(value);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+fn decode_indexable_markdown(bytes: &[u8]) -> String {
+    let mut content = String::with_capacity(bytes.len());
+    let mut remaining = bytes;
+
+    while !remaining.is_empty() {
+        match std::str::from_utf8(remaining) {
+            Ok(valid) => {
+                push_without_nuls(&mut content, valid);
+                break;
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                let valid = std::str::from_utf8(&remaining[..valid_up_to])
+                    .expect("valid_up_to must split at a UTF-8 boundary");
+                push_without_nuls(&mut content, valid);
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                remaining = &remaining[valid_up_to + invalid_len..];
+            }
+        }
+    }
+
+    content
+}
+
 fn extract_metadata(
     path: &str,
     frontmatter: Option<&serde_json::Value>,
@@ -192,6 +252,22 @@ fn extract_metadata(
         tags,
         links,
         aliases,
+    }
+}
+
+fn prepare_page_index_data(path: &str, raw_content: &str) -> PageIndexData {
+    let (frontmatter, body) = parse_frontmatter(raw_content);
+    let mut frontmatter_json =
+        frontmatter.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    sanitize_json_strings(&mut frontmatter_json);
+
+    let mut metadata = extract_metadata(path, Some(&frontmatter_json), body);
+    metadata.title = sanitize_text_for_postgres(&metadata.title);
+
+    PageIndexData {
+        frontmatter_json,
+        metadata,
+        body: body.to_string(),
     }
 }
 
@@ -436,8 +512,8 @@ impl IndexerQueue {
             }
 
             info!("Indexing: parsing/saving page={}", path_str);
-            let raw_content = match fs::read_to_string(&file_path) {
-                Ok(c) => c,
+            let raw_content = match fs::read(&file_path) {
+                Ok(bytes) => decode_indexable_markdown(&bytes),
                 Err(e) => {
                     error!("Failed to read file {:?}: {:?}", file_path, e);
                     continue;
@@ -453,11 +529,7 @@ impl IndexerQueue {
                 Err(_) => 0,
             };
 
-            let (frontmatter, body) = parse_frontmatter(&raw_content);
-            let frontmatter_json =
-                frontmatter.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-            let metadata = extract_metadata(&path_str, Some(&frontmatter_json), body);
+            let page_data = prepare_page_index_data(&path_str, &raw_content);
             let slug = Path::new(&path_str)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -475,11 +547,11 @@ impl IndexerQueue {
             )
             .bind(&path_str)
             .bind(&slug)
-            .bind(&metadata.title)
-            .bind(&frontmatter_json)
-            .bind(metadata.has_mermaid)
+            .bind(&page_data.metadata.title)
+            .bind(&page_data.frontmatter_json)
+            .bind(page_data.metadata.has_mermaid)
             .bind(mtime)
-            .bind(body)
+            .bind(&page_data.body)
             .fetch_one(&mut *tx)
             .await?;
             let page_id = row.0;
@@ -501,7 +573,7 @@ impl IndexerQueue {
                 .await?;
 
             // Insert tags
-            for tag in metadata.tags {
+            for tag in page_data.metadata.tags {
                 sqlx::query("INSERT INTO tb_tags (page_id, tag) VALUES ($1, $2) ON CONFLICT (page_id, tag) DO NOTHING")
                     .bind(page_id)
                     .bind(&tag)
@@ -510,7 +582,7 @@ impl IndexerQueue {
             }
 
             // Insert aliases
-            for alias in metadata.aliases {
+            for alias in page_data.metadata.aliases {
                 sqlx::query("INSERT INTO tb_page_aliases (page_id, alias) VALUES ($1, $2) ON CONFLICT (page_id, alias) DO NOTHING")
                     .bind(page_id)
                     .bind(&alias)
@@ -519,7 +591,7 @@ impl IndexerQueue {
             }
 
             // Insert links (we'll resolve target_ids after all pages are saved/indexed)
-            for link in metadata.links {
+            for link in page_data.metadata.links {
                 let alias_opt = link.alias.as_deref();
                 sqlx::query(
                     "INSERT INTO tb_links (src_id, kind, is_embed, target, target_norm, target_id, alias) \
@@ -664,5 +736,29 @@ impl IndexerQueue {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prepare_page_index_data_sanitizes_nul_and_invalid_utf8() {
+        let raw_content =
+            decode_indexable_markdown(include_bytes!("../tests/fixtures/indexer/nul_invalid.md"));
+        let page_data = prepare_page_index_data("nul_invalid.md", &raw_content);
+        let frontmatter =
+            serde_json::to_string(&page_data.frontmatter_json).expect("frontmatter is JSON");
+
+        assert_eq!(page_data.metadata.title, "NUL Title");
+        assert!(page_data
+            .body
+            .contains("Body with NUL byte and invalid utf8."));
+        assert!(page_data.metadata.tags.contains("nul-tag"));
+        assert!(!frontmatter.contains('\0'));
+        assert!(!page_data.metadata.title.contains('\0'));
+        assert!(!page_data.body.contains('\0'));
+        assert!(!page_data.body.contains('\u{fffd}'));
     }
 }
