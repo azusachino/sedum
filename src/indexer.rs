@@ -7,9 +7,14 @@ use notify::Watcher;
 use regex::Regex;
 use sqlx::PgPool;
 use std::collections::HashSet;
+use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::sleep;
@@ -279,6 +284,7 @@ pub enum WatcherEvent {
 
 pub struct IndexerQueue {
     sender: mpsc::Sender<WatcherEvent>,
+    reconcile_queued: Arc<AtomicBool>,
     _watcher: notify::RecommendedWatcher,
 }
 
@@ -289,11 +295,13 @@ impl IndexerQueue {
         events: broadcast::Sender<String>,
     ) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(1024);
+        let reconcile_queued = Arc::new(AtomicBool::new(false));
 
         // 1. Run startup reconcile sweep in the background
         let db_clone = db_pool.clone();
         let content_root_clone = content_root.clone();
         let events_clone = events.clone();
+        let reconcile_queued_for_consumer = Arc::clone(&reconcile_queued);
         tokio::spawn(async move {
             info!("Starting startup reconcile sweep...");
             if let Err(e) = Self::reconcile_all(&db_clone, &content_root_clone, &events_clone).await
@@ -304,7 +312,14 @@ impl IndexerQueue {
             }
 
             // Start consumer loop
-            Self::run_consumer(receiver, db_clone, content_root_clone, events_clone).await;
+            Self::run_consumer(
+                receiver,
+                db_clone,
+                content_root_clone,
+                events_clone,
+                reconcile_queued_for_consumer,
+            )
+            .await;
         });
 
         // 2. Set up notify watcher
@@ -365,27 +380,56 @@ impl IndexerQueue {
         // delete-missing) and runs on the same single-writer consumer via the
         // __reconcile__ sentinel, so this never races the watcher or the handlers.
         let reconcile_sender = sender.clone();
+        let reconcile_queued_for_ticker = Arc::clone(&reconcile_queued);
+        let reconcile_interval = Self::reconcile_interval();
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(5));
+            let mut ticker = tokio::time::interval(reconcile_interval);
             ticker.tick().await; // consume the immediate first tick (startup sweep covers it)
             loop {
                 ticker.tick().await;
-                let _ = reconcile_sender
-                    .try_send(WatcherEvent::Modified(PathBuf::from("__reconcile__")));
+                Self::try_queue_reconcile(&reconcile_sender, &reconcile_queued_for_ticker);
             }
         });
 
         Ok(Self {
             sender,
+            reconcile_queued,
             _watcher: watcher,
         })
     }
 
     pub fn trigger_reconcile(&self) {
         // If channel fills or other safety guards trigger
-        let _ = self
-            .sender
-            .try_send(WatcherEvent::Modified(PathBuf::from("__reconcile__")));
+        Self::try_queue_reconcile(&self.sender, &self.reconcile_queued);
+    }
+
+    fn reconcile_interval() -> Duration {
+        env::var("MIKU_RECONCILE_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .map_or_else(|| Duration::from_secs(30), Duration::from_secs)
+    }
+
+    fn try_queue_reconcile(
+        sender: &mpsc::Sender<WatcherEvent>,
+        reconcile_queued: &AtomicBool,
+    ) -> bool {
+        if reconcile_queued
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+
+        match sender.try_send(WatcherEvent::Modified(PathBuf::from("__reconcile__"))) {
+            Ok(()) => true,
+            Err(e) => {
+                reconcile_queued.store(false, Ordering::Release);
+                warn!("Failed to queue reconcile event: {:?}", e);
+                false
+            }
+        }
     }
 
     async fn run_consumer(
@@ -393,6 +437,7 @@ impl IndexerQueue {
         db_pool: PgPool,
         content_root: PathBuf,
         events: broadcast::Sender<String>,
+        reconcile_queued: Arc<AtomicBool>,
     ) {
         let mut debounce_buffer = HashSet::new();
         let debounce_duration = Duration::from_millis(300);
@@ -403,6 +448,7 @@ impl IndexerQueue {
                 if let Err(e) = Self::reconcile_all(&db_pool, &content_root, &events).await {
                     error!("Reconciliation sweep failed: {:?}", e);
                 }
+                reconcile_queued.store(false, Ordering::Release);
                 continue;
             }
 
@@ -413,6 +459,7 @@ impl IndexerQueue {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
                     let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
+                    reconcile_queued.store(false, Ordering::Release);
                     break;
                 }
                 debounce_buffer.insert(evt);
@@ -430,6 +477,7 @@ impl IndexerQueue {
                 if evt == WatcherEvent::Modified(PathBuf::from("__reconcile__")) {
                     debounce_buffer.clear();
                     let _ = Self::reconcile_all(&db_pool, &content_root, &events).await;
+                    reconcile_queued.store(false, Ordering::Release);
                     break;
                 }
                 debounce_buffer.insert(evt);
@@ -788,5 +836,19 @@ mod tests {
         assert!(!page_data.metadata.title.contains('\0'));
         assert!(!page_data.body.contains('\0'));
         assert!(!page_data.body.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn test_reconcile_interval_defaults_and_reads_env() {
+        env::remove_var("MIKU_RECONCILE_INTERVAL_SECS");
+        assert_eq!(IndexerQueue::reconcile_interval(), Duration::from_secs(30));
+
+        env::set_var("MIKU_RECONCILE_INTERVAL_SECS", "45");
+        assert_eq!(IndexerQueue::reconcile_interval(), Duration::from_secs(45));
+
+        env::set_var("MIKU_RECONCILE_INTERVAL_SECS", "0");
+        assert_eq!(IndexerQueue::reconcile_interval(), Duration::from_secs(30));
+
+        env::remove_var("MIKU_RECONCILE_INTERVAL_SECS");
     }
 }
