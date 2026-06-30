@@ -3,7 +3,7 @@
 **Supersedes v2.** v2 introduced RocksDB to dodge the inotify watch limit. That
 limit was misdiagnosed: inotify watches are **per-directory, not per-file**, so a
 wiki with sane foldering never approaches it, and RocksDB was solving a problem
-sedum doesn't have. v3 keeps the v1 single-writer model unchanged and instead
+Miku doesn't have. v3 keeps the v1 single-writer model unchanged and instead
 **corrects the scale story**: watch *folders*, raise one sysctl, fall back to
 polling only past a real threshold. No second store, core invariant intact.
 
@@ -34,9 +34,9 @@ anywhere" thesis. App-originated saves don't strictly need it, but routing them
 through the same watcher keeps a single index trigger and no save↔index race
 (v1's core property). Both are cheap at folder granularity, so v3 keeps them.
 
-**Core invariant unchanged.** Markdown files under `sedum/` are the source of
+**Core invariant unchanged.** Markdown files under `miku/` are the source of
 truth; Postgres is the sole disposable index, rebuildable from
-`sedum/**/*.md`.
+`miku/**/*.md`.
 
 ---
 
@@ -46,13 +46,13 @@ truth; Postgres is the sole disposable index, rebuildable from
 flowchart LR
   Browser["Browser<br/>(rendered HTML + textarea)"]
 
-  subgraph Server["sedum — Rust single binary"]
+  subgraph Server["Miku — Rust single binary"]
     HTTP["axum HTTP layer<br/>(read-only on Postgres)"]
     Store["Store<br/>(atomic file I/O)"]
     Indexer["Background indexer<br/>(sole Postgres writer)"]
   end
 
-  FS[("sedum/ Markdown<br/>source of truth")]
+  FS[("miku/ Markdown<br/>source of truth")]
   PG[("Postgres<br/>disposable index")]
 
   Browser -->|"GET view / edit"| HTTP
@@ -77,7 +77,7 @@ no save↔index race.
 sequenceDiagram
   participant B as Browser
   participant H as axum handler
-  participant FS as sedum/*.md
+  participant FS as miku/*.md
   participant W as notify watcher
   participant I as Indexer
   participant PG as Postgres
@@ -121,7 +121,7 @@ Three levers, in order of preference:
 3. **`PollWatcher` fallback past a threshold.** The `notify` crate ships a
    polling watcher that uses **zero** inotify watches, trading latency for
    budget. Switch to it only when directory count is genuinely extreme — this is
-   the 100k-files-in-archive / `SEDUM_READONLY` territory from
+   the 100k-files-in-archive / `MIKU_READONLY` territory from
    `architecture.md`.
 
 New-subdirectory race: a file created in a brand-new directory *before* its watch
@@ -139,7 +139,7 @@ git/rsync).
 
 ```mermaid
 flowchart TD
-  A["startup"] --> B["scan sedum/**/*.md"]
+  A["startup"] --> B["scan miku/**/*.md"]
   B --> C{"mtime changed?"}
   C -- no --> E["skip"]
   C -- yes --> D{"content-hash ≠ pages.hash?"}

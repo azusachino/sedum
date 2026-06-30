@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-26
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:watcher-at-scale
+mirror: asobi:miku:decision:watcher-at-scale
 supersedes: []
 superseded-by:
 relates-to: []
@@ -30,7 +30,7 @@ count**. Three levers, in order:
    "increase watches" note every IDE ships). Covers the rare deep-tree case.
 3. **`PollWatcher` fallback** — zero inotify watches, periodic mtime scan, traded
    for latency. Switched on only past an extreme directory-count threshold
-   (archive / `SEDUM_READONLY` territory).
+   (archive / `MIKU_READONLY` territory).
 
 The startup mtime+hash reconcile sweeps anything missed across the new-subdir
 registration race or process downtime.
@@ -48,7 +48,7 @@ files-are-truth payoff.
 ## Trade-offs / Rejected
 
 **RocksDB** as a durable work-queue or primary store (the former
-`dataflow_v2.md`) is rejected: it solves a problem sedum doesn't have, adds a
+`dataflow_v2.md`) is rejected: it solves a problem Miku doesn't have, adds a
 second store, and risks the core invariant (files-are-truth). The
 event-driven, single-writer v1 model is retained unchanged. See
 `docs/dataflow_v3.md` (supersedes v2).

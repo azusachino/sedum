@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-26
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:frontend-rendering
+mirror: asobi:miku:decision:frontend-rendering
 supersedes: []
 superseded-by:
 supersedes-doc: ["product.md: server-side syntect highlighting"]
@@ -41,7 +41,7 @@ vendored, locally-served (`/static/js/vendor/`, offline-capable) scripts:
 
 ## Why
 
-Obsidian's power-via-plugins is also its Electron-weight tax; sedum's wedge is
+Obsidian's power-via-plugins is also its Electron-weight tax; Miku's wedge is
 server-owned indexing with the browser as a thin client. "No *bundler*" keeps
 that promise while allowing a few vendored `<script>` tags. The palette and
 autocomplete are genuinely interactive (keyboard, debounced fetch, dynamic
@@ -53,7 +53,7 @@ letting the MVP ship the editor/index/search first.
 
 - **Prism reverses `product.md`'s server-side `syntect` decision** — accepted
   consciously for MVP speed (latest decision wins). **Cost:** code blocks FOUC
-  until JS runs, and JS-disabled / `SEDUM_READONLY`-published readers get no
+  until JS runs, and JS-disabled / `MIKU_READONLY`-published readers get no
   highlighting. **`syntect` is deferred, not rejected:** the post-MVP path is
   highlight-at-save + cache rendered HTML by content hash (ADR-2), serving
   JS-free classed HTML. Revisit when the publish / no-JS persona is in scope.

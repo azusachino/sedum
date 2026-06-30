@@ -6,7 +6,7 @@ status: Accepted
 date-proposed: 2026-06-26
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:theme-switching
+mirror: asobi:miku:decision:theme-switching
 supersedes: []
 superseded-by:
 extends: [ADR-0007]

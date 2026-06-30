@@ -1,5 +1,5 @@
 {
-  description = "sedum — filesystem-owned personal Markdown wiki";
+  description = "miku — filesystem-owned personal Markdown wiki";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -21,6 +21,8 @@
             clippy
             # python scripting/automation (run via `uv run`, replaces bash glue)
             uv
+            # HTTP smoke/load probe used by make bench when a server is running
+            oha
             # formatting
             prettier
           ];

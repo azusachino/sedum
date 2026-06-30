@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Sedum (セダム / 麒麟草) is a filesystem-owned personal Markdown wiki: a browser
+Miku (初音ミク / ミク) is a filesystem-owned personal Markdown wiki: a browser
 editor over plain `.md` files with server-side, background indexing for
 backlinks, tags, and full-text search.
 
@@ -15,9 +15,9 @@ backlinks, tags, and full-text search.
 - **Filesystem watch:** notify (background indexer)
 - **Frontend (v0):** server-rendered HTML + plain `<textarea>` (no JS bundler)
 
-**Core invariant:** Markdown files + assets under `sedum/` are the source of
+**Core invariant:** Markdown files + assets under `miku/` are the source of
 truth. Postgres holds only a disposable index (`pages`, `links`, `tags`, FTS)
-that is fully rebuildable from `sedum/**/*.md`. See `docs/architecture.md`.
+that is fully rebuildable from `miku/**/*.md`. See `docs/architecture.md`.
 
 **Single-writer model:** HTTP handlers are read-only against Postgres; the
 background indexer is the sole writer. Saves are atomic (temp + rename) and the

@@ -1,4 +1,4 @@
-# Sedum — Product & Positioning
+# Miku — Product & Positioning
 
 > Design rework written *before* implementation. Personas drive scope; scope
 > drives the build. See `architecture.md` for the technical contract.
@@ -9,13 +9,13 @@
 Knowledge scattered across Confluence, Notion, Slack DMs, and a `~/notes`
 folder. Nothing links. During an incident she follows `[[postgres-failover]]`
 backlinks to the runbook, the postmortem, and the capacity note, fixes the doc,
-and commits all of `sedum/` to a private git repo — versioned, diffable notes.
+and commits all of `miku/` to a private git repo — versioned, diffable notes.
 - **Leans on:** backlinks, FTS, plain `.md` on disk (git/rg/sed still work), no lock-in.
 - **Before:** real knowledge, unsearchable across five silos; lost on every tool migration.
 
 ### 2. Tanaka-san — Records & Compliance Officer (municipal office)
 Cloud SaaS is a data-sovereignty and procurement problem. Records must live on
-managed, auditable storage and outlive any vendor. Runs Sedum on-prem; the files
+managed, auditable storage and outlive any vendor. Runs Miku on-prem; the files
 are the record, Postgres is explicitly disposable. Audit is `git log` over the
 notes directory.
 - **Leans on:** filesystem-as-truth, self-hosted, no proprietary format, rebuildable index.
@@ -65,53 +65,61 @@ can't read without the vendor. When the subscription lapses, your second brain
 is held hostage — and your real tools (git, grep, your editor, your backup)
 can't touch the data.
 
-**Why Sedum — your wiki is just Markdown files; Sedum is the lens, not the cage:**
-- **You own the files.** Plain `.md` in one folder. Delete Sedum tomorrow; your knowledge is untouched.
+**Why Miku — your wiki is just Markdown files; Miku is the lens, not the cage:**
+- **You own the files.** Plain `.md` in one folder. Delete Miku tomorrow; your knowledge is untouched.
 - **Connections, found for you.** `[[links]]` → backlinks, tags, FTS built in the background. The valuable graph, without hand-maintenance.
-- **The database is disposable, on purpose.** Postgres is a cache; nuke it and Sedum rebuilds from files. Nothing important lives anywhere but your disk.
+- **The database is disposable, on purpose.** Postgres is a cache; nuke it and Miku rebuilds from files. Nothing important lives anywhere but your disk.
 - **Self-host or run local.** No account, no telemetry, no cloud.
 - **It gets out of your way.** Browser editor over a textarea. No bundler, no app to learn, no migration the day you need it most.
 
 **One line:** *Obsidian's linking and a real search engine — but the files are
 unarguably yours, and the index is something you can throw away.*
 
+## Product name — Miku
+
+The project is named **Miku** (初音ミク) — Hatsune Miku, the iconic Vocaloid
+voice bank and cultural figure in music/tech. Like the Vocaloid engine itself,
+Miku lets you compose and shape knowledge without vendor lock-in: the *content*
+(Markdown files) is the source of truth, and Miku is the tool layer that renders,
+links, and searches — ephemeral and replaceable.
+
 ## What we learn from Notion and Obsidian
 
 ### From Notion (the polish & onboarding playbook)
 - **The empty state is the product.** Notion never shows a blank page — it shows
-  templates and a "/" menu that teaches the tool. Sedum's first run should seed a
+  templates and a "/" menu that teaches the tool. Miku's first run should seed a
   welcome page that *demonstrates* `[[links]]` and `#tags`, not an empty textarea.
 - **The "/" command palette** turns a blank box into a discoverable surface. A
-  Sedum command bar (`Ctrl-K`: quick-open, new page, search) is the single
+  Miku command bar (`Ctrl-K`: quick-open, new page, search) is the single
   highest-leverage UI affordance — it serves Mei's capture and Priya's navigation at once.
 - **Bidirectional context is shown, not summoned.** Notion surfaces related
-  content inline. Sedum's backlink panel should always be visible, not a click away.
+  content inline. Miku's backlink panel should always be visible, not a click away.
 - **What NOT to copy:** the proprietary block model and DB-as-truth. That's
-  exactly the lock-in Sedum exists to refuse. Notion's data is the cage; ours is files.
+  exactly the lock-in Miku exists to refuse. Notion's data is the cage; ours is files.
 
 ### From Obsidian (the local-first, file-owned playbook — our closest sibling)
 - **Files-on-disk is a feature users evangelize**, not a technical detail.
-  Obsidian's whole trust story is "it's just Markdown in a folder." Sedum shares
+  Obsidian's whole trust story is "it's just Markdown in a folder." Miku shares
   this DNA — lean into it as the headline, like they do.
 - **`[[wikilink]]` autocomplete is the core interaction.** Typing `[[` and
   fuzzy-picking an existing page (or creating one inline) is what makes linking
-  effortless enough to actually do. This is the one interaction Sedum must nail.
+  effortless enough to actually do. This is the one interaction Miku must nail.
 - **Backlinks + unlinked mentions.** Obsidian shows both explicit backlinks and
   *unlinked* textual mentions — a gentle nudge to connect. Worth considering once
   FTS exists (cheap to compute from the index we already build).
 - **Local graph view** is the demo that sells it, even if rarely used daily.
   Defer for v0, but it's the screenshot that makes Aiko's worldbuilding click.
 - **Plugins are why it's sticky — and why it's heavy.** Obsidian's power is a
-  plugin ecosystem; its cost is a JS-heavy Electron app. Sedum's bet is the
+  plugin ecosystem; its cost is a JS-heavy Electron app. Miku's bet is the
   opposite: server-side indexing, no bundler, the browser as a thin client.
   *Don't* chase plugins in v0 — the server-owned index is our differentiator.
-- **What NOT to copy:** Electron weight and the sync paywall. Sedum is
+- **What NOT to copy:** Electron weight and the sync paywall. Miku is
   self-hosted and uses git for sync — no vault-sync subscription.
 
 ### The synthesis
 Notion teaches **discoverability** (command palette, never-blank states, inline
 context). Obsidian teaches **ownership** (files as truth, frictionless
-`[[linking]]`, backlinks as the daily payoff). Sedum's wedge is taking
+`[[linking]]`, backlinks as the daily payoff). Miku's wedge is taking
 Obsidian's ownership story and moving the *indexing* server-side — so linking,
 backlinks, tags, and search are computed for you in the background instead of by
 a pile of client plugins, while the files stay plainly, provably yours.
@@ -132,10 +140,10 @@ and the groundwork for a future Dataview-lite query, with no hardcoded schema.
 
 ### Rendering: "no JS bundler / server-first" ≠ "zero JS"
 
-> **Superseded for the MVP by ADR-7** (`docs/adr/0007-frontend-rendering.md`):
-> highlighting uses **client-side Prism.js** for the MVP; **`syntect` is
+> **Latest decision: ADR-7** (`docs/adr/0007-frontend-rendering.md`) — see there.
+> Highlights uses **client-side Prism.js** for the MVP; **`syntect` is
 > deferred** as a post-MVP swap. The server-side stance below is the *target*,
-> not the MVP. Latest decision wins.
+> not the MVP.
 
 - **Code highlighting → server-side `syntect`.** Highlight at render time into
   classed spans, colored by CSS; themeable via the Themes mechanism. No client
@@ -151,4 +159,4 @@ and the groundwork for a future Dataview-lite query, with no hardcoded schema.
 **Deferred:** Dataview-style queries (our Postgres index is the right home for
 it later), templates (lightweight `templates/` seed files), daily-notes/calendar
 (a date-named-note convention). **Rejected:** a general JS plugin system — that
-is the Electron-weight tax Sedum exists to avoid.
+is the Electron-weight tax Miku exists to avoid.

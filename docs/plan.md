@@ -1,6 +1,6 @@
 # Plan
 
-Tracked durably in the asobi graph under epic `sedum:mvp`. This file mirrors it
+Tracked durably in the asobi graph under epic `miku:mvp`. This file mirrors it
 for humans.
 
 ## Current phase
@@ -11,7 +11,7 @@ v0 — vertical slice (skeleton → CRUD edit/save/render loop).
 
 In:
 
-1. Markdown page CRUD (content root `sedum/`)
+1. Markdown page CRUD (content root `miku/`)
 2. `[[wiki links]]` parse / resolve / render
 3. Backlinks
 4. Tags (`#tag`)
@@ -33,6 +33,6 @@ by wiki-links).
 ## Decisions
 
 - Postgres index — see `docs/architecture.md` and asobi
-  `sedum:decision:postgres-index`.
+  `miku:decision:postgres-index`.
 - v0 frontend = server-rendered + textarea — asobi
-  `sedum:decision:frontend-v0-textarea`.
+  `miku:decision:frontend-v0-textarea`.

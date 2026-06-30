@@ -4,11 +4,11 @@
 
 - Use `make <target>` for all task execution — never run tools directly
 - At session start: load asobi entities (`/asobi start`)
-- At session end: write state to the `sedum:session` asobi entity; save
-  conventions to the `sedum` project entity (`/asobi end`)
+- At session end: write state to the `miku:session` asobi entity; save
+  conventions to the `miku` project entity (`/asobi end`)
 - Dispatch sub-agents for independent tasks — parallelize where possible
 - Stage files explicitly: `git add <specific files>` only
-- Keep the core invariant: files under `sedum/` are truth; Postgres is a
+- Keep the core invariant: files under `miku/` are truth; Postgres is a
   disposable, rebuildable index
 
 ### DON'T

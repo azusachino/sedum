@@ -6,11 +6,11 @@ status: Accepted
 date-proposed: 2026-06-25
 date-accepted: 2026-06-26
 deciders: [haru]
-mirror: asobi:sedum:decision:markdown-wikilink-grammar
+mirror: asobi:miku:decision:markdown-wikilink-grammar
 supersedes: []
 superseded-by:
 relates-to: [ADR-0005]
-embeds-decision: sedum:decision:no-mdx
+embeds-decision: miku:decision:no-mdx
 impacts: [src/render, src/indexer]
 tags: [markdown, comrak, wikilinks, tags, callouts]
 ---
@@ -41,6 +41,6 @@ content hash later.
 ## Trade-offs / Rejected
 
 No MDX/JSX — needs a JS runtime, breaks plain-Markdown portability
-(`sedum:decision:no-mdx`). CM6 is a *separate axis*: a client-side editor that
+(`miku:decision:no-mdx`). CM6 is a *separate axis*: a client-side editor that
 does not render the read view or feed the index (server still parses via comrak)
 — roadmap, orthogonal to this ADR.

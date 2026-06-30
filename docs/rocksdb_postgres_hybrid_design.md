@@ -12,7 +12,7 @@ flowchart TD
         UI["Thin Web View / Editor"]
     end
 
-    subgraph Server ["Sedum Web Server"]
+    subgraph Server ["Miku Web Server"]
         Axum["Axum HTTP Handlers"]
         Rocks["RocksDB (Embedded KV)\nPrimary Operational Store\n(Raw Markdown Body + Metadata)"]
         
@@ -23,7 +23,7 @@ flowchart TD
     end
 
     PG[("Postgres DB\n(FTS vectors / Backlinks / Tags Index\nNO raw page bodies)")]
-    FS[("sedum/ md directory\n(Local Sync Target)")]
+    FS[("miku/ md directory\n(Local Sync Target)")]
 
     UI -->|"GET /page/Foo (Read page)"| Axum
     Axum -->|"Read raw body (Microseconds)"| Rocks
