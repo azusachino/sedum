@@ -198,6 +198,7 @@ fn app(state: AppState) -> Router {
         .route("/events", get(events))
         .route("/api/move", post(page_move))
         .route("/api/trash", post(page_trash))
+        .route("/api/nav/children", get(nav_children_handler))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/assets", ServeDir::new("miku/assets"))
         .layer(TraceLayer::new_for_http())
@@ -348,10 +349,49 @@ fn build_nav_tree(rows: Vec<(String, String)>) -> Vec<NavNode> {
     tree_to_nav_nodes(root, String::new())
 }
 
+// Prune a built tree for lazy rendering: keep folder children only along the
+// active page's ancestor chain; every other folder is emptied so the template
+// emits a collapsed stub that lazy-loads via /api/nav/children on first expand.
+// This keeps the page payload to root level + the open page's path, not O(N).
+fn prune_nav_tree(nodes: &mut [NavNode], active: &str, prefix: &str) {
+    for node in nodes.iter_mut() {
+        if node.path.is_some() {
+            continue; // leaf page, no children to prune
+        }
+        let folder_path = if prefix.is_empty() {
+            node.name.clone()
+        } else {
+            format!("{prefix}/{}", node.name)
+        };
+        let is_ancestor = active == folder_path || active.starts_with(&format!("{folder_path}/"));
+        if is_ancestor {
+            prune_nav_tree(&mut node.children, active, &folder_path);
+        } else {
+            node.children.clear();
+        }
+    }
+}
+
+// Descend a built tree to the direct children of `dir` (slash-separated folder
+// path). Returns an empty vec if the folder is absent.
+fn nav_folder_children(nodes: Vec<NavNode>, dir: &str) -> Vec<NavNode> {
+    let mut current = nodes;
+    for seg in dir.split('/') {
+        match current
+            .into_iter()
+            .find(|n| n.path.is_none() && n.name == seg)
+        {
+            Some(folder) => current = folder.children,
+            None => return Vec::new(),
+        }
+    }
+    current
+}
+
 // Sidebar nav: every page in the index, title-sorted, for the explorer list
 // rendered by base.html. The index is the disposable read model; a freshly
 // saved page appears once the background indexer catches up.
-async fn nav_pages(db: &sqlx::PgPool) -> Result<Vec<NavNode>, AppError> {
+async fn nav_pages(db: &sqlx::PgPool, active: &str) -> Result<Vec<NavNode>, AppError> {
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT path, title FROM tb_pages ORDER BY title")
             .fetch_all(db)
@@ -361,7 +401,47 @@ async fn nav_pages(db: &sqlx::PgPool) -> Result<Vec<NavNode>, AppError> {
         .into_iter()
         .map(|(path, title)| (path.strip_suffix(".md").unwrap_or(&path).to_string(), title))
         .collect();
-    Ok(build_nav_tree(stripped_rows))
+    let mut tree = build_nav_tree(stripped_rows);
+    // Render only the root level plus the active page's ancestor folders; all
+    // other folders lazy-load on expand. Avoids serializing the whole vault.
+    prune_nav_tree(&mut tree, active, "");
+    Ok(tree)
+}
+
+// GET /api/nav/children?dir=<folder> — htmx partial: the direct children of one
+// folder, each subfolder itself collapsed/lazy. Lets the sidebar expand folders
+// on demand instead of rendering the entire tree up front.
+#[derive(serde::Deserialize)]
+struct NavChildrenQuery {
+    dir: Option<String>,
+}
+
+async fn nav_children_handler(
+    Query(params): Query<NavChildrenQuery>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let dir = params.dir.unwrap_or_default();
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT path, title FROM tb_pages ORDER BY title")
+            .fetch_all(&state.db)
+            .await
+            .context("Failed to load nav children")?;
+    let stripped_rows: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(path, title)| (path.strip_suffix(".md").unwrap_or(&path).to_string(), title))
+        .collect();
+    let tree = build_nav_tree(stripped_rows);
+    let mut nodes = if dir.is_empty() {
+        tree
+    } else {
+        nav_folder_children(tree, &dir)
+    };
+    // Show one level; grandchildren stay lazy (active="" => nothing pre-expands).
+    prune_nav_tree(&mut nodes, "", &dir);
+
+    let template = state.templates.get_template("nav_children.html")?;
+    let rendered = template.render(context! { nodes => nodes, prefix => dir })?;
+    Ok(Html(rendered).into_response())
 }
 
 // Dispatch to view or edit based on the path suffix
@@ -437,7 +517,7 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     info!("Rendering page view for path: {}", path);
     let file_path = safe_file_path(&path)?;
     let template = state.templates.get_template("page.html")?;
-    let nav = nav_pages(&state.db).await?;
+    let nav = nav_pages(&state.db, &path).await?;
 
     let path_segments: Vec<&str> = path.split('/').collect();
     if !file_path.exists() {
@@ -555,7 +635,7 @@ async fn page_edit(
         (seed.to_string(), String::new())
     };
 
-    let nav = nav_pages(&state.db).await?;
+    let nav = nav_pages(&state.db, &path).await?;
     let rendered = template.render(context! {
         path => path,
         body => body,
@@ -608,7 +688,7 @@ async fn page_save(
         if disk_hash != form.loaded_hash {
             warn!("Conflict detected on page save: path={}", path);
             let template = state.templates.get_template("conflict.html")?;
-            let nav = nav_pages(&state.db).await?;
+            let nav = nav_pages(&state.db, &path).await?;
             let rendered = template.render(context! {
                 path => path,
                 current_content => disk_content,
@@ -776,7 +856,7 @@ async fn search(
             .collect()
     };
 
-    let nav = nav_pages(&state.db).await?;
+    let nav = nav_pages(&state.db, "").await?;
     let rendered = template.render(context! {
         query => query_str,
         results => results,
@@ -804,7 +884,7 @@ async fn tags_index(State(state): State<AppState>) -> Result<impl IntoResponse, 
         .map(|(tag, count)| TagCount { tag, count })
         .collect();
 
-    let nav = nav_pages(&state.db).await?;
+    let nav = nav_pages(&state.db, "").await?;
     let rendered = template.render(context! {
         tags => tags,
         nav_pages => nav,
@@ -840,7 +920,7 @@ async fn tag_filter(
         })
         .collect();
 
-    let nav = nav_pages(&state.db).await?;
+    let nav = nav_pages(&state.db, "").await?;
     let rendered = template.render(context! {
         tag => tag,
         pages => pages,
@@ -1174,6 +1254,46 @@ mod tests {
         assert_eq!(level3.len(), 1);
         assert_eq!(level3[0].name, "Deep Page");
         assert_eq!(level3[0].path, Some("a/b/c/d".to_string()));
+    }
+
+    #[test]
+    fn test_prune_nav_tree_keeps_only_active_ancestors() {
+        let rows = vec![
+            ("a/b/c".to_string(), "C".to_string()),
+            ("a/x".to_string(), "X".to_string()),
+            ("d/e".to_string(), "E".to_string()),
+        ];
+        let mut tree = build_nav_tree(rows);
+        prune_nav_tree(&mut tree, "a/b/c", "");
+
+        // Roots "a" and "d" both present, but only "a" (ancestor) keeps children.
+        let a = tree.iter().find(|n| n.name == "a").expect("a present");
+        let d = tree.iter().find(|n| n.name == "d").expect("d present");
+        assert!(d.children.is_empty(), "non-ancestor folder pruned to stub");
+        // "a" keeps child folder "b"; sibling page "x" stays (already loaded).
+        let b = a.children.iter().find(|n| n.name == "b").expect("b kept");
+        assert_eq!(b.children.len(), 1, "ancestor folder b keeps its child");
+        assert_eq!(b.children[0].path, Some("a/b/c".to_string()));
+    }
+
+    #[test]
+    fn test_nav_folder_children_descends_to_dir() {
+        let rows = vec![
+            ("a/b/c".to_string(), "C".to_string()),
+            ("a/b/f".to_string(), "F".to_string()),
+            ("a/x".to_string(), "X".to_string()),
+        ];
+        let tree = build_nav_tree(rows);
+        let children = nav_folder_children(tree, "a/b");
+        let names: Vec<&str> = children.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["C", "F"]);
+    }
+
+    #[test]
+    fn test_nav_folder_children_missing_dir_is_empty() {
+        let rows = vec![("a/b".to_string(), "B".to_string())];
+        let tree = build_nav_tree(rows);
+        assert!(nav_folder_children(tree, "nope/here").is_empty());
     }
 
     // The SSE feature is a read-only broadcast fan-out: the indexer sends a

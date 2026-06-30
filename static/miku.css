@@ -196,8 +196,9 @@ a { color: var(--teal); }
 
 /* ---- File tree ---- */
 .mk-section-label { font-size: 10.5px; font-weight: 800; letter-spacing: 1.4px; color: var(--muted); padding: 0 8px 8px; }
-.mk-tree-folder { display: flex; align-items: center; gap: 10px; padding: 9px 11px; margin-top: 10px;
+.mk-tree-folder { display: flex; align-items: center; gap: 10px; padding: 9px 11px; margin-top: 10px; min-width: 0;
   color: var(--muted); font-weight: 800; font-size: 11px; letter-spacing: .8px; text-transform: uppercase; }
+.tree-folder-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mk-tree-item {
   display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; margin-bottom: 2px;
   border: none; border-radius: 11px; background: transparent; color: var(--muted);
@@ -237,7 +238,8 @@ a { color: var(--teal); }
 
 .mk-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
 .mk-h1 {
-  margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 46px; line-height: 1.05; letter-spacing: -.5px;
+  margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 32px; line-height: 1.15; letter-spacing: -.5px;
+  min-width: 0; overflow-wrap: anywhere; word-break: break-word;
   background: var(--grad-text); background-size: 220% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
   animation: shimmer 8s linear infinite;
 }

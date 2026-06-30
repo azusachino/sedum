@@ -26,8 +26,8 @@ Miku - {{ path }}
         </nav>
 
         <div class="mk-title-row flex items-start justify-between gap-5 mb-2">
-            <h1 class="flex items-center gap-3">
-                <span class="text-teal/80 text-[32px] leading-none shrink-0 select-none" aria-hidden="true">📄</span>
+            <h1 class="flex items-center gap-3 min-w-0">
+                <span class="text-teal/80 text-[22px] leading-none shrink-0 select-none" aria-hidden="true">📄</span>
                 <span class="mk-h1">{{ title }}</span>
             </h1>
             {% if exists %}
@@ -39,10 +39,6 @@ Miku - {{ path }}
 
         {% if exists %}
         <ul class="list-disc pl-5 space-y-1 text-xs text-muted/70 mb-6 border-b border-border/10 pb-4">
-            <!-- Note Type Badge -->
-            <li class="inline-flex items-center gap-1.5 bg-teal/5 text-teal px-2 py-0.5 rounded border border-teal/15 font-semibold text-[11px] list-none ml-[-20px] mb-2">
-                <span class="text-[10px]">📄</span> Text Note
-            </li>
             <!-- Word Count -->
             <li>
                 <span>{{ word_count }}</span> words

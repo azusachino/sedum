@@ -170,14 +170,15 @@ fn extract_metadata(
         static ref TAG_REGEX: Regex = Regex::new(r"(?:\s|^|['`\(])#([\p{L}\p{N}][\p{L}\p{N}_\-/]*)").unwrap();
     }
 
+    // Skip `#tags` inside code (literal) and links (URL fragments), but allow
+    // them inside headings (Obsidian-style) — kept in sync with the renderer's
+    // tag_skipped so the indexed tag set matches the rendered tag links.
     let is_skipped = |node: &comrak::nodes::AstNode| -> bool {
         let mut current = node.parent();
         while let Some(parent) = current {
             let val = &parent.data.borrow().value;
             match val {
-                NodeValue::Heading(_) | NodeValue::CodeBlock(_) | NodeValue::Link(_) => {
-                    return true
-                }
+                NodeValue::CodeBlock(_) | NodeValue::Link(_) => return true,
                 _ => {}
             }
             current = parent.parent();

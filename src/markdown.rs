@@ -309,14 +309,15 @@ fn render_admonition(
     )
 }
 
-/// True when a text node sits inside a heading, link, or code context, where
-/// inline `#tags` must NOT be linkified — kept in sync with the indexer's skip
-/// rule so rendered tag links match the indexed tag set.
+/// True when a text node sits inside a link or code context, where inline
+/// `#tags` must NOT be linkified (a `#frag` in a URL is not a tag; `#tag` in
+/// code is literal). Headings DO allow tags (Obsidian-style) — kept in sync
+/// with the indexer's skip rule so rendered tag links match the indexed set.
 fn tag_skipped<'a>(node: &'a AstNode<'a>) -> bool {
     let mut current = node.parent();
     while let Some(parent) = current {
         match &parent.data.borrow().value {
-            NodeValue::Heading(_) | NodeValue::CodeBlock(_) | NodeValue::Link(_) => return true,
+            NodeValue::CodeBlock(_) | NodeValue::Link(_) => return true,
             _ => {}
         }
         current = parent.parent();
@@ -575,8 +576,18 @@ mod tests {
     }
 
     #[test]
-    fn test_render_tag_skipped_in_heading() {
-        let html = render_html("# Heading #notag\n", &|norm| Some(norm.to_string()));
+    fn test_render_tag_in_heading_linkified() {
+        // Obsidian-style: #tags inside headings ARE linkified.
+        let html = render_html("# Heading #docs\n", &|norm| Some(norm.to_string()));
+        assert!(html.contains(r#"<a href="/tags/docs" class="tag-inline">#docs</a>"#));
+    }
+
+    #[test]
+    fn test_render_tag_still_skipped_in_link() {
+        // A `#frag` inside a link label is not a tag.
+        let html = render_html("[#notag](https://example.com)", &|norm| {
+            Some(norm.to_string())
+        });
         assert!(!html.contains("tag-inline"));
     }
 
