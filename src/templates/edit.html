@@ -40,7 +40,6 @@ Miku - Edit {{ path }}
     </header>
 
     <div class="mk-edit-title-container px-6 py-4 border-b border-border/15 bg-panel/10 flex items-center gap-3">
-        <span class="text-teal/80 text-2xl select-none" aria-hidden="true">📄</span>
         <input
             type="text"
             id="edit-title-input"
@@ -251,6 +250,7 @@ Miku - Edit {{ path }}
                         preview.innerHTML = html || '<p><em>Blank page.</em></p>';
                         preview.dataset.state = 'ready';
                         if (window.Prism) window.Prism.highlightAllUnder(preview);
+                        if (window.mikuInjectCopyButtons) window.mikuInjectCopyButtons(preview);
                     })
                     .catch(function() {
                         if (current !== requestId) return;

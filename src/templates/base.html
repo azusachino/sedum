@@ -48,27 +48,48 @@
         .tree-link { flex: 1; min-width: 0; }
         .tree-menu-btn { width: 32px; height: 32px; flex: 0 0 32px; opacity: 0; }
         .tree-row:hover .tree-menu-btn { opacity: 1; }
-        .tree-menu {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            z-index: 20;
-            min-width: 160px;
-            padding: 8px;
-        }
-        .tree-menu form { margin: 0; }
-        .tree-menu button { width: 100%; justify-content: flex-start; }
         .tree-menu-danger { color: #f85149; }
-        .tree-rename {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            z-index: 25;
+
+        /* Cursor-positioned file-tree context menu (single instance). */
+        .mk-tree-menu {
+            position: fixed;
+            z-index: 200;
+            min-width: 168px;
+            padding: 6px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 4px;
         }
+        .mk-tree-menu button { width: 100%; justify-content: flex-start; }
+
+        /* Tree action toast (move conflicts / trash undo). */
+        .mk-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            z-index: 210;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            max-width: min(90vw, 480px);
+            padding: 10px 14px;
+            border-radius: var(--radius-ctl);
+            border: 1px solid var(--border);
+            background: var(--panel);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, .32);
+            font-size: 13px;
+        }
+
+        /* Trash view list. */
+        .mk-trash-list { display: flex; flex-direction: column; gap: 8px; }
+        .mk-trash-item { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+        .mk-trash-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .mk-trash-meta .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mk-trash-meta .path { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mk-trash-meta .time { font-size: 11px; color: var(--muted); }
+        .mk-trash-actions { display: flex; gap: 8px; }
+
         .tree-children {
             display: flex;
             flex-direction: column;
@@ -77,11 +98,21 @@
             border-left: 1px solid var(--border);
         }
         .drag-over,
-        .nav-tree.drag-over-root {
+        .drag-over-root {
             outline: 2px dashed var(--teal);
             outline-offset: 2px;
             border-radius: var(--radius-ctl);
         }
+        /* Root drop affordance: the Files header doubles as the only root drop
+           target. It reveals a hint and a dashed outline while a drag is in
+           flight so the target is explicit, not the whole empty panel. */
+        .mk-root-drop { display: flex; align-items: baseline; gap: 8px; }
+        .mk-root-drop.is-drop-armed {
+            outline: 1px dashed var(--border);
+            outline-offset: 2px;
+            border-radius: var(--radius-ctl);
+        }
+        .mk-root-hint { font-size: 9.5px; font-weight: 700; letter-spacing: .6px; color: var(--teal); text-transform: none; }
         .new-page-input {
             min-width: 0;
             flex: 1;
@@ -173,6 +204,18 @@
             border-top: 1px solid var(--border);
         }
         .backlinks-title { color: var(--muted); }
+        .mk-mention {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .mk-mention p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .mk-mention form { margin: 0; }
         .wiki-embed { max-width: 100%; height: auto; border-radius: var(--radius-ctl); }
         .tag-inline {
             display: inline-block;
@@ -241,43 +284,41 @@
 
     {% block head %}{% endblock %}
 </head>
-<body x-data="mikuShell()" x-init="init()" class="bg-bg-base text-text-base font-body antialiased selection:bg-teal/32 overflow-hidden h-full">
+<body x-data="mikuShell()" x-init="init()" :class="{ 'mk-zen': zenMode }" class="bg-bg-base text-text-base font-body antialiased selection:bg-teal/32 overflow-hidden h-full">
     <div class="mk-app relative flex flex-col h-screen overflow-hidden" hx-boost="true">
-        <div class="mk-orbs absolute inset-0 overflow-hidden pointer-events-none z-0" aria-hidden="true">
-            <div class="mk-orb a absolute rounded-full"></div>
-            <div class="mk-orb b absolute rounded-full"></div>
-            <div class="mk-orb c absolute rounded-full"></div>
-        </div>
-
         <header class="mk-topbar relative z-10 flex items-center gap-5 px-5.5 py-3.25 border-b border-border bg-topbar backdrop-blur-[22px] flex-shrink-0">
             <a class="mk-brand flex items-center gap-3 w-66 flex-shrink-0 no-underline" href="/p/Index" aria-label="Miku home">
                 <span class="mk-logo relative w-10.5 h-10.5 rounded-[14px] bg-grad flex items-center justify-center shadow-[0_8px_22px_var(--tealglow)]" aria-hidden="true">
-                    <span class="eqbars flex items-end gap-[3px] h-[18px]">
-                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite]"></i>
-                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.18s]"></i>
-                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.36s]"></i>
-                        <i class="w-[3px] h-full bg-white rounded-[3px] origin-bottom animate-[eq_1s_ease-in-out_infinite] [animation-delay:0.54s]"></i>
-                    </span>
+                    <span class="mk-logo-mark">M</span>
                 </span>
                 <span class="mk-wordmark font-display font-bold text-[21px] tracking-[0.4px] text-text-base leading-none">Miku<small class="block font-body text-[11px] font-semibold text-muted tracking-[0.2px] mt-0.5">personal wiki</small></span>
             </a>
 
-            <a href="/search" class="mk-search-trigger flex-1 max-w-[560px] flex items-center gap-2.75 px-4 py-2.75 rounded-[14px] border border-border bg-panel text-muted font-body font-semibold text-sm cursor-pointer hover:border-teal hover:text-text-base transition-all duration-180 no-underline" data-go-search>
-                <span>Search pages, tags, and links</span>
+            <button type="button" class="mk-search-trigger flex-1 max-w-[560px] flex items-center gap-2.75 px-4 py-2.75 rounded-[14px] border border-border bg-panel text-muted font-body font-semibold text-sm cursor-pointer hover:border-teal hover:text-text-base transition-all duration-180 no-underline" data-go-search @click="openPalette('pages')">
+                <span>Jump to page or run a command</span>
                 <span class="mk-kbd font-sans text-[11px] font-bold px-1.75 py-0.75 rounded-[6px] bg-panel2 border border-border">Cmd K</span>
-            </a>
+            </button>
 
             <div class="mk-topbar-right flex items-center gap-2.5 ml-auto">
                 <div class="mk-seg flex p-[3px] rounded-xl bg-panel border border-border" aria-label="Theme">
-                    <button type="button" data-set-theme="light" aria-label="Use light theme">L</button>
-                    <button type="button" data-set-theme="dark" aria-label="Use dark theme">D</button>
+                    <button type="button" data-set-theme="light" aria-label="Use light theme">
+                        <svg class="mk-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2.5M12 19.5V22M4.93 4.93 6.7 6.7M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07 6.7 17.3M17.3 6.7l1.77-1.77"></path></svg>
+                    </button>
+                    <button type="button" data-set-theme="dark" aria-label="Use dark theme">
+                        <svg class="mk-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 7.5 7.5 0 1 0 20.5 14.5Z"></path></svg>
+                    </button>
                 </div>
-                <button type="button" class="mk-icon-btn flex items-center justify-center w-10 h-10 rounded-xl border border-border bg-panel text-muted cursor-pointer transition-colors duration-180 hover:text-teal hover:border-teal" @click="settingsOpen = true" aria-label="Open settings">&#9881;</button>
+                <button type="button" class="mk-icon-btn flex items-center justify-center w-10 h-10 rounded-xl border border-border bg-panel text-muted cursor-pointer transition-colors duration-180 hover:text-teal hover:border-teal" @click="openPalette('commands')" aria-label="Open command palette">
+                    <svg class="mk-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-10"></path><path d="m14 7 6 10"></path><path d="M7 13h10"></path></svg>
+                </button>
+                <button type="button" class="mk-icon-btn flex items-center justify-center w-10 h-10 rounded-xl border border-border bg-panel text-muted cursor-pointer transition-colors duration-180 hover:text-teal hover:border-teal" @click="settingsOpen = true" aria-label="Open settings">
+                    <svg class="mk-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.22.35.6.6 1 .6h.6a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.4Z"></path></svg>
+                </button>
             </div>
         </header>
 
         <div class="mk-body relative z-0 flex flex-1 min-h-0">
-            <aside class="mk-sidebar w-72 flex-shrink-0 flex flex-col border-r border-border bg-sidebar backdrop-blur-[18px]">
+            <aside class="mk-sidebar flex-shrink-0 flex flex-col border-r border-border bg-sidebar backdrop-blur-[18px]">
                 {% set sec = section | default('files') %}
                 <div class="flex flex-col flex-1 min-h-0" x-data="{ sidebarTab: '{{ sec }}' }">
                     <nav class="mk-tabs" aria-label="Sections" role="tablist">
@@ -296,6 +337,11 @@
                                 :aria-selected="sidebarTab === 'tags'"
                                 aria-controls="sidebar-tags"
                                 @click="sidebarTab = 'tags'">Tags</button>
+                        <button type="button" role="tab" class="mk-tab"
+                                :class="{ 'is-active': sidebarTab === 'trash' }"
+                                :aria-selected="sidebarTab === 'trash'"
+                                aria-controls="sidebar-trash"
+                                @click="sidebarTab = 'trash'; $store.tree.loadTrash()">Trash</button>
                     </nav>
 
                 {% from "_nav_macro.html" import nav_node %}
@@ -310,20 +356,19 @@
                           <span class="mk-kbd">Cmd N</span>
                         </button>
 
-                        <div class="mk-section-label file-viewer-title">Files</div>
-                        <div class="nav-tree w-full" x-data="{ dragOver: false }" :class="{ 'drag-over-root': dragOver }"
-                             @dragover.prevent="dragOver = true"
-                             @dragleave="dragOver = false"
-                             @drop.prevent="
-                               dragOver = false;
-                               const from = $event.dataTransfer.getData('text/plain');
-                               if(!from) return;
-                               const to = from.split('/').pop();
-                               if (from === to) return;
-                               const fd = new FormData(); fd.append('from', from); fd.append('to', to);
-                               fetch('/api/move', {method:'POST', body:new URLSearchParams(fd)})
-                                 .then(r => { if(r.redirected) window.location.href = r.url; else window.location.reload(); });
-                             ">
+                        {# Root drop target is this header only — NOT the whole
+                           panel — so an accidental drag ending on empty scroll
+                           space can't silently yank a nested page to the vault
+                           root. Guards miku:pitfall:silent-move-to-root. #}
+                        <div class="mk-section-label file-viewer-title mk-root-drop"
+                             :class="{ 'drag-over-root': $store.tree.dropTarget === '', 'is-drop-armed': $store.tree.dragging }"
+                             @dragover.prevent="$store.tree.dropTarget = ''"
+                             @dragleave="if ($store.tree.dropTarget === '') $store.tree.dropTarget = null"
+                             @drop.prevent="$store.tree.dropInto('', $event)">
+                          <span>Files</span>
+                          <span class="mk-root-hint" x-show="$store.tree.dragging" x-cloak>drop to move to root</span>
+                        </div>
+                        <div class="nav-tree w-full">
                           {% if nav_pages %}
                             {% for node in nav_pages %}{{ nav_node(node, '', path | default('')) }}{% endfor %}
                           {% else %}
@@ -334,16 +379,18 @@
 
                       <section id="sidebar-search" class="mk-sidebar-panel mk-sidebar-tools" role="tabpanel"
                                x-show="sidebarTab === 'search'" :hidden="sidebarTab !== 'search'">
-                        <form method="get" action="/search" class="mk-sidebar-tools">
+                        <form method="get" action="/search" class="mk-sidebar-tools"
+                              hx-boost="true" hx-target=".mk-view" hx-select=".mk-view"
+                              hx-swap="outerHTML show:top" hx-push-url="true">
                           <label class="mk-search-field" aria-label="Search notes">
                             <span aria-hidden="true">⌕</span>
                             <input x-ref="sidebarSearch" type="search" name="q"
                                    value="{{ query | default('') }}" placeholder="Search notes..." autocomplete="off">
                           </label>
                           <div class="mk-sidebar-actions" aria-label="Search scope">
-                            <button type="submit" name="scope" value="all" class="mk-chip">All</button>
-                            <button type="submit" name="scope" value="title" class="mk-chip">Title</button>
-                            <button type="submit" name="scope" value="body" class="mk-chip">Body</button>
+                            <button type="submit" name="scope" value="all" class="mk-chip {% if scope | default('all') == 'all' %}is-active{% endif %}">All</button>
+                            <button type="submit" name="scope" value="title" class="mk-chip {% if scope | default('all') == 'title' %}is-active{% endif %}">Title</button>
+                            <button type="submit" name="scope" value="body" class="mk-chip {% if scope | default('all') == 'body' %}is-active{% endif %}">Body</button>
                           </div>
                         </form>
 
@@ -372,6 +419,32 @@
                           <div class="mk-sidebar-empty">Open Tags to load tag counts.</div>
                         {% endif %}
                       </section>
+
+                      {# Trash view: lazy-loads GET /api/trash on first open; Restore/Delete
+                         wire to $store.tree. Trashed files live under miku/.trash and are
+                         excluded from the index. #}
+                      <section id="sidebar-trash" class="mk-sidebar-panel mk-sidebar-tools" role="tabpanel"
+                               x-show="sidebarTab === 'trash'" :hidden="sidebarTab !== 'trash'">
+                        <div class="mk-section-label">Trash</div>
+                        <template x-if="$store.tree.trashItems.length === 0">
+                          <div class="mk-sidebar-empty" x-text="$store.tree.trashLoading ? 'Loading…' : 'Trash is empty.'"></div>
+                        </template>
+                        <div class="mk-trash-list">
+                          <template x-for="item in $store.tree.trashItems" :key="item.id">
+                            <div class="mk-trash-item mk-card">
+                              <div class="mk-trash-meta">
+                                <span class="name" x-text="item.title || item.original_path"></span>
+                                <span class="path" x-text="item.original_path"></span>
+                                <span class="time" x-text="$store.tree.relTime(item.trashed_at)"></span>
+                              </div>
+                              <div class="mk-trash-actions">
+                                <button type="button" class="mk-chip" @click="$store.tree.restore(item.id)">Restore</button>
+                                <button type="button" class="mk-chip tree-menu-danger" @click="$store.tree.purge(item.id)">Delete</button>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+                      </section>
                     </div>
                 </div>
 
@@ -390,12 +463,61 @@
                     </div>
                 </div>
             </aside>
+            <button type="button" class="mk-pane-resizer mk-sidebar-resizer"
+                    @pointerdown="startPaneResize($event, 'sidebar')"
+                    aria-label="Resize file panel"></button>
 
             <main class="mk-main">
                 <div class="mk-view" x-data x-init="if (window.Prism) Prism.highlightAll()">
                     {% block content %}{% endblock %}
                 </div>
             </main>
+        </div>
+
+        <div class="mk-command-overlay" x-show="paletteOpen" x-transition.opacity hx-boost="false"
+             @keydown.escape.window="closePalette()"
+             @keydown.arrow-down.prevent="movePalette(1)"
+             @keydown.arrow-up.prevent="movePalette(-1)"
+             @keydown.enter.prevent="choosePalette()"
+             x-cloak>
+            <section class="mk-command-modal" @click.outside="closePalette()" aria-modal="true" role="dialog" aria-labelledby="command-title">
+                <div class="mk-command-head">
+                    <span id="command-title" x-text="paletteMode === 'pages' ? 'Quick Switcher' : 'Command Palette'"></span>
+                    <div class="mk-command-tabs" aria-label="Palette mode">
+                        <button type="button" :class="{ 'is-active': paletteMode === 'pages' }" @click="setPaletteMode('pages')">Pages</button>
+                        <button type="button" :class="{ 'is-active': paletteMode === 'commands' }" @click="setPaletteMode('commands')">Commands</button>
+                    </div>
+                </div>
+                <label class="mk-command-input">
+                    <span aria-hidden="true">⌕</span>
+                    <input x-ref="paletteInput" type="search" x-model="paletteQuery"
+                           placeholder="Type to filter..." autocomplete="off">
+                </label>
+                <div class="mk-command-list" role="listbox">
+                    <template x-if="paletteLoading">
+                        <div class="mk-command-empty">Loading...</div>
+                    </template>
+                    <template x-if="!paletteLoading && paletteError">
+                        <div class="mk-command-empty" x-text="paletteError"></div>
+                    </template>
+                    <template x-if="!paletteLoading && !paletteError && paletteItems.length === 0">
+                        <div class="mk-command-empty">No matches.</div>
+                    </template>
+                    <template x-for="(item, idx) in paletteItems" :key="item.kind + ':' + item.id">
+                        <button type="button" role="option" class="mk-command-item"
+                                :class="{ 'is-active': idx === paletteIndex }"
+                                @mouseenter="paletteIndex = idx"
+                                @click="choosePalette(idx)">
+                            <span class="mk-command-mark" x-text="item.mark"></span>
+                            <span class="mk-command-text">
+                                <strong x-text="item.title"></strong>
+                                <small x-text="item.subtitle"></small>
+                            </span>
+                            <span class="mk-kbd" x-show="item.shortcut" x-text="item.shortcut"></span>
+                        </button>
+                    </template>
+                </div>
+            </section>
         </div>
 
         <div class="mk-overlay" x-show="createOpen" x-transition.opacity
@@ -503,6 +625,23 @@
                 </div>
             </section>
         </div>
+
+        {# File-tree context menu — single instance, positioned at the cursor and
+           driven entirely by $store.tree (see static/miku.js). Replaces the old
+           per-row inline menu/rename/trash forms. #}
+        <div class="mk-tree-menu mk-card" x-show="$store.tree.menu.open" x-cloak
+             @click.outside="$store.tree.closeMenu()"
+             @keydown.escape.window="$store.tree.closeMenu()"
+             :style="`left:${$store.tree.menu.x}px; top:${$store.tree.menu.y}px;`">
+            <button type="button" class="mk-chip" @click="$store.tree.renamePrompt($store.tree.menu.path)">Rename / move…</button>
+            <button type="button" class="mk-chip tree-menu-danger" @click="$store.tree.trash($store.tree.menu.path)">Delete</button>
+        </div>
+
+        {# Tree action toast: move-conflict messages and the trash Undo affordance. #}
+        <div class="mk-toast" x-show="$store.tree.toast.show" x-transition.opacity x-cloak>
+            <span x-text="$store.tree.toast.message"></span>
+            <button type="button" class="mk-chip" x-show="$store.tree.toast.undo" @click="$store.tree.runUndo()">Undo</button>
+        </div>
     </div>
 
     <script>
@@ -510,6 +649,17 @@
             return {
                 settingsOpen: false,
                 createOpen: false,
+                paletteOpen: false,
+                paletteMode: 'pages',
+                paletteQuery: '',
+                paletteItems: [],
+                paletteLoading: false,
+                paletteError: '',
+                paletteIndex: 0,
+                paletteRequestId: 0,
+                paletteTimer: null,
+                paletteAbortController: null,
+                zenMode: false,
                 createTitle: '',
                 createFolder: '',
                 createTemplate: 'blank',
@@ -522,6 +672,21 @@
                 animatedAccents: true,
                 showBacklinks: true,
                 compactSpacing: false,
+                paneWidths: {
+                    sidebar: 288,
+                    rail: 260
+                },
+                commandItems: [
+                    { kind: 'command', id: 'new', mark: '+', title: 'New page', subtitle: 'Create a note', shortcut: 'Cmd N', run: shell => shell.openCreate() },
+                    { kind: 'command', id: 'edit', mark: 'E', title: 'Toggle edit / read', subtitle: 'Open editor or return to page', shortcut: 'Cmd E', run: shell => shell.toggleEdit() },
+                    { kind: 'command', id: 'zen', mark: 'Z', title: 'Toggle Zen mode', subtitle: 'Hide chrome and center the note', shortcut: '', run: shell => shell.toggleZen() },
+                    { kind: 'command', id: 'tags', mark: '#', title: 'Go to tags', subtitle: 'Browse tag index', shortcut: '', run: () => { window.location.href = '/tags'; } },
+                    { kind: 'command', id: 'search', mark: 'S', title: 'Full-text search', subtitle: 'Open the search page', shortcut: '', run: () => { window.location.href = '/search'; } },
+                    { kind: 'command', id: 'theme', mark: 'T', title: 'Toggle theme', subtitle: 'Switch light and dark', shortcut: '', run: () => {
+                        const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+                        document.querySelector('[data-set-theme="' + (current === 'light' ? 'dark' : 'light') + '"]')?.click();
+                    } }
+                ],
                 get createSlug() {
                     return (this.createTitle || '').trim().toLowerCase()
                         .replace(/[^a-z0-9]+/g, '-')
@@ -534,12 +699,138 @@
                     this.animatedAccents = this.readBool('miku:animated-accents', true);
                     this.showBacklinks = this.readBool('miku:show-backlinks', true);
                     this.compactSpacing = this.readBool('miku:compact-spacing', false);
+                    this.zenMode = this.readBool('miku:zen-mode', false);
+                    this.paneWidths.sidebar = this.readNumber('miku:sidebar-width', 288, 220, 520);
+                    this.paneWidths.rail = this.readNumber('miku:rail-width', 260, 220, 440);
                     this.applyReadingPrefs();
+                    this.applyPaneWidths();
                     this.$watch('animatedAccents', value => { this.writeBool('miku:animated-accents', value); this.applyReadingPrefs(); });
                     this.$watch('showBacklinks', value => { this.writeBool('miku:show-backlinks', value); this.applyReadingPrefs(); });
                     this.$watch('compactSpacing', value => { this.writeBool('miku:compact-spacing', value); this.applyReadingPrefs(); });
+                    this.$watch('zenMode', value => { this.writeBool('miku:zen-mode', value); });
+                    this.$watch('paletteQuery', () => {
+                        if (this.paletteOpen) this.queuePaletteRefresh();
+                    });
+                    window.addEventListener('keydown', event => {
+                        if (!(event.metaKey || event.ctrlKey)) return;
+                        const key = event.key.toLowerCase();
+                        if (key === 'k') {
+                            event.preventDefault();
+                            this.openPalette('pages');
+                        } else if (key === '/' || (event.shiftKey && key === 'p')) {
+                            event.preventDefault();
+                            this.openPalette('commands');
+                        } else if (key === 'e') {
+                            event.preventDefault();
+                            this.toggleEdit();
+                        }
+                    });
+                },
+                openPalette(mode) {
+                    this.paletteOpen = true;
+                    this.setPaletteMode(mode || 'pages');
+                    this.$nextTick(() => {
+                        if (this.$refs.paletteInput) this.$refs.paletteInput.focus();
+                    });
+                },
+                closePalette() {
+                    this.paletteOpen = false;
+                    this.paletteQuery = '';
+                    this.paletteItems = [];
+                    this.paletteError = '';
+                    this.paletteIndex = 0;
+                    this.paletteLoading = false;
+                    this.paletteRequestId++;
+                    window.clearTimeout(this.paletteTimer);
+                    if (this.paletteAbortController) {
+                        this.paletteAbortController.abort();
+                        this.paletteAbortController = null;
+                    }
+                },
+                setPaletteMode(mode) {
+                    this.paletteMode = mode;
+                    this.paletteQuery = '';
+                    this.paletteError = '';
+                    this.paletteIndex = 0;
+                    this.refreshPalette();
+                },
+                queuePaletteRefresh() {
+                    window.clearTimeout(this.paletteTimer);
+                    this.paletteTimer = window.setTimeout(() => this.refreshPalette(), 120);
+                },
+                async refreshPalette() {
+                    const requestId = ++this.paletteRequestId;
+                    this.paletteIndex = 0;
+                    this.paletteError = '';
+                    window.clearTimeout(this.paletteTimer);
+                    if (this.paletteAbortController) {
+                        this.paletteAbortController.abort();
+                        this.paletteAbortController = null;
+                    }
+                    if (this.paletteMode === 'commands') {
+                        const query = this.paletteQuery.trim().toLowerCase();
+                        this.paletteItems = this.commandItems.filter(item => {
+                            return !query || item.title.toLowerCase().includes(query) || item.subtitle.toLowerCase().includes(query);
+                        });
+                        this.paletteLoading = false;
+                        return;
+                    }
+                    const query = this.paletteQuery.trim();
+                    const controller = new AbortController();
+                    let timeoutId = null;
+                    const timeout = new Promise((_, reject) => {
+                        timeoutId = window.setTimeout(() => {
+                            controller.abort();
+                            reject(new Error('Quick switcher timed out'));
+                        }, 5000);
+                    });
+                    this.paletteAbortController = controller;
+                    this.paletteLoading = true;
+                    try {
+                        const res = await Promise.race([fetch('/api/quickswitch?q=' + encodeURIComponent(query), {
+                            headers: { 'Accept': 'application/json' },
+                            signal: controller.signal
+                        }), timeout]);
+                        const rows = res.ok ? await res.json() : [];
+                        if (requestId !== this.paletteRequestId) return;
+                        this.paletteError = res.ok ? '' : 'Quick switcher failed.';
+                        this.paletteItems = rows.map(row => ({
+                            kind: 'page',
+                            id: row.path,
+                            mark: 'P',
+                            title: row.title,
+                            subtitle: row.path + '.md',
+                            shortcut: '',
+                            run: () => { window.location.href = '/p/' + row.path.split('/').map(encodeURIComponent).join('/'); }
+                        }));
+                    } catch (e) {
+                        if (requestId !== this.paletteRequestId) return;
+                        if (e && e.name === 'AbortError' && this.paletteOpen) {
+                            this.paletteError = 'Quick switcher timed out.';
+                        } else {
+                            this.paletteError = 'Quick switcher failed.';
+                        }
+                        this.paletteItems = [];
+                    } finally {
+                        if (timeoutId !== null) window.clearTimeout(timeoutId);
+                        if (requestId === this.paletteRequestId) {
+                            this.paletteLoading = false;
+                            this.paletteAbortController = null;
+                        }
+                    }
+                },
+                movePalette(delta) {
+                    if (!this.paletteItems.length) return;
+                    this.paletteIndex = (this.paletteIndex + delta + this.paletteItems.length) % this.paletteItems.length;
+                },
+                choosePalette(index) {
+                    const item = this.paletteItems[index ?? this.paletteIndex];
+                    if (!item) return;
+                    this.closePalette();
+                    item.run(this);
                 },
                 openCreate() {
+                    this.closePalette();
                     this.createOpen = true;
                     this.createTitle = '';
                     this.createFolder = '';
@@ -561,6 +852,49 @@
                         : '';
                     window.location.href = '/p/' + path + '/edit' + query;
                 },
+                toggleEdit() {
+                    const path = window.location.pathname;
+                    if (!path.startsWith('/p/')) return;
+                    if (document.querySelector('[data-inline-editor]')) {
+                        window.dispatchEvent(new CustomEvent('miku-toggle-edit'));
+                        return;
+                    }
+                    if (path.endsWith('/edit')) {
+                        window.location.href = path.slice(0, -5);
+                    } else {
+                        window.location.href = path.replace(/\/$/, '') + '/edit';
+                    }
+                },
+                toggleZen() {
+                    this.zenMode = !this.zenMode;
+                },
+                startPaneResize(event, pane) {
+                    event.preventDefault();
+                    const startX = event.clientX;
+                    const startWidth = pane === 'sidebar'
+                        ? this.paneWidths.sidebar
+                        : this.paneWidths.rail;
+                    const limits = pane === 'sidebar'
+                        ? { min: 220, max: 520, key: 'miku:sidebar-width' }
+                        : { min: 220, max: 440, key: 'miku:rail-width' };
+                    const onMove = moveEvent => {
+                        const delta = pane === 'sidebar'
+                            ? moveEvent.clientX - startX
+                            : startX - moveEvent.clientX;
+                        const next = Math.min(limits.max, Math.max(limits.min, startWidth + delta));
+                        this.paneWidths[pane] = next;
+                        document.documentElement.style.setProperty(pane === 'sidebar' ? '--sidebar-w' : '--rail-w', next + 'px');
+                    };
+                    const onUp = () => {
+                        window.removeEventListener('pointermove', onMove);
+                        window.removeEventListener('pointerup', onUp);
+                        document.documentElement.classList.remove('mk-resizing');
+                        try { localStorage.setItem(limits.key, String(this.paneWidths[pane])); } catch (e) {}
+                    };
+                    document.documentElement.classList.add('mk-resizing');
+                    window.addEventListener('pointermove', onMove);
+                    window.addEventListener('pointerup', onUp, { once: true });
+                },
                 readBool(key, fallback) {
                     try {
                         const value = localStorage.getItem(key);
@@ -569,8 +903,21 @@
                         return fallback;
                     }
                 },
+                readNumber(key, fallback, min, max) {
+                    try {
+                        const raw = Number(localStorage.getItem(key));
+                        if (!Number.isFinite(raw)) return fallback;
+                        return Math.min(max, Math.max(min, raw));
+                    } catch (e) {
+                        return fallback;
+                    }
+                },
                 writeBool(key, value) {
                     try { localStorage.setItem(key, value ? 'true' : 'false'); } catch (e) {}
+                },
+                applyPaneWidths() {
+                    document.documentElement.style.setProperty('--sidebar-w', this.paneWidths.sidebar + 'px');
+                    document.documentElement.style.setProperty('--rail-w', this.paneWidths.rail + 'px');
                 },
                 applyReadingPrefs() {
                     document.documentElement.setAttribute('data-animated-accents', this.animatedAccents ? 'true' : 'false');
@@ -596,6 +943,8 @@
             });
 
             document.addEventListener('htmx:afterSwap', function(evt) {
+                document.documentElement.removeAttribute('data-nav-loading');
+                syncActiveTreeLink();
                 if (window.Prism) {
                     Prism.highlightAllUnder(evt.detail.target);
                 }
@@ -605,6 +954,40 @@
                 // Try syncing the indicator status on load
                 syncIndicatorStatus();
             });
+            document.addEventListener('htmx:afterOnLoad', function(evt) {
+                const xhr = evt.detail && evt.detail.xhr;
+                if (!xhr || !xhr.responseText) return;
+                const title = xhr.responseText.match(/<title>([\s\S]*?)<\/title>/i);
+                if (title && title[1]) {
+                    document.title = title[1].trim();
+                }
+            });
+            document.addEventListener('htmx:beforeRequest', function(evt) {
+                const elt = evt.detail && evt.detail.elt;
+                const nav = elt && elt.closest && elt.closest('a[href^="/p/"], form[action="/search"]');
+                if (nav) document.documentElement.setAttribute('data-nav-loading', 'true');
+            });
+            document.addEventListener('htmx:responseError', function() {
+                document.documentElement.removeAttribute('data-nav-loading');
+            });
+
+            const prefetched = new Set();
+            function prefetchPageLink(link) {
+                if (!link || !link.href || prefetched.has(link.href)) return;
+                const url = new URL(link.href, window.location.href);
+                if (url.origin !== window.location.origin || !url.pathname.startsWith('/p/')) return;
+                prefetched.add(link.href);
+                fetch(url.pathname + url.search, {
+                    headers: { 'X-Miku-Prefetch': '1' },
+                    priority: 'low'
+                }).catch(function() {});
+            }
+            document.addEventListener('pointerover', function(event) {
+                prefetchPageLink(event.target.closest && event.target.closest('a[href^="/p/"]'));
+            });
+            document.addEventListener('focusin', function(event) {
+                prefetchPageLink(event.target.closest && event.target.closest('a[href^="/p/"]'));
+            });
 
             function syncIndicatorStatus() {
                 const indicator = document.querySelector("[data-sync-indicator]");
@@ -612,6 +995,18 @@
                     indicator.hidden = false;
                     indicator.style.opacity = (window.mikuSyncActive === true) ? "1" : "0.05";
                 }
+            }
+
+            function syncActiveTreeLink() {
+                const path = decodeURIComponent(window.location.pathname.replace(/^\/p\//, '').replace(/\/edit$/, ''));
+                document.querySelectorAll('.tree-link.is-active, .tree-link.active').forEach(function(link) {
+                    link.classList.remove('is-active', 'active');
+                });
+                if (!window.location.pathname.startsWith('/p/')) return;
+                const active = Array.from(document.querySelectorAll('.tree-link[href^="/p/"]')).find(function(link) {
+                    return decodeURIComponent(link.getAttribute('href').replace(/^\/p\//, '')) === path;
+                });
+                if (active) active.classList.add('is-active', 'active');
             }
 
             async function refreshArticle(pagePath) {
@@ -630,6 +1025,9 @@
                         current.innerHTML = fresh.innerHTML;
                         if (window.Prism) {
                             Prism.highlightAllUnder(current);
+                        }
+                        if (window.mikuInjectCopyButtons) {
+                            window.mikuInjectCopyButtons(current);
                         }
                     }
                 } catch (err) {
