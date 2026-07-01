@@ -29,4 +29,4 @@ New to Miku? Check out [[Sandbox]] for a guided tour of Markdown syntax and wiki
 
 ---
 
-Last updated: 2026-06-26
+Last updated: 2026-06-30

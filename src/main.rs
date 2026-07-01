@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header::HeaderName, HeaderValue, StatusCode},
     response::{
         sse::{self, KeepAlive, Sse},
         Html, IntoResponse, Redirect, Response,
     },
     routing::{get, post},
-    Form, Router,
+    Form, Json, Router,
 };
 use chrono::{DateTime, Local};
 use miku::markdown::{extract_title, parse_frontmatter, render_html_with_toc, Heading};
@@ -20,14 +20,24 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{info, warn};
+
+const SERVER_TIMING: HeaderName = HeaderName::from_static("server-timing");
 
 #[derive(serde::Serialize)]
 struct Backlink {
     path: String,
     title: String,
+}
+
+#[derive(serde::Serialize)]
+struct UnlinkedMention {
+    path: String,
+    title: String,
+    snippet: String,
 }
 
 #[derive(serde::Serialize)]
@@ -47,6 +57,56 @@ struct SearchResult {
     path: String,
     title: String,
     snippet: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SearchScope {
+    All,
+    Title,
+    Body,
+}
+
+impl SearchScope {
+    fn from_param(scope: Option<&str>) -> Self {
+        match scope {
+            Some("title") => Self::Title,
+            Some("body") => Self::Body,
+            _ => Self::All,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Title => "title",
+            Self::Body => "body",
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct QuickSwitchResult {
+    path: String,
+    title: String,
+}
+
+#[derive(serde::Serialize)]
+struct BreadcrumbItem {
+    label: String,
+    path: String,
+    current: bool,
+}
+
+#[derive(serde::Serialize)]
+struct FolderChild {
+    name: String,
+    path: String,
+}
+
+#[derive(serde::Serialize)]
+struct FolderPage {
+    title: String,
+    path: String,
 }
 
 fn search_snippet(body: &str, query: &str) -> String {
@@ -82,10 +142,33 @@ fn search_snippet(body: &str, query: &str) -> String {
     }
 }
 
+fn timing_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
+fn timing_header_value(name: &str, elapsed_ms: f64) -> Option<HeaderValue> {
+    HeaderValue::from_str(&format!("{name};dur={elapsed_ms:.1}")).ok()
+}
+
+fn attach_server_timing(response: &mut Response, name: &str, elapsed_ms: f64) {
+    if let Some(value) = timing_header_value(name, elapsed_ms) {
+        response.headers_mut().insert(SERVER_TIMING, value);
+    }
+}
+
+fn escape_like(query: &str) -> String {
+    query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 #[derive(serde::Serialize)]
 struct NavNode {
     name: String,         // folder segment name, or page title for leaves
     path: Option<String>, // Some(slug-path without .md) for pages; None for folders
+    stem: String,         // folder segment or filename stem; used for file-browser sorting
+    sort_key: String,
     children: Vec<NavNode>,
 }
 
@@ -178,8 +261,14 @@ async fn main() -> Result<()> {
     // 7. Build Router & Configure axum routes
     let app = app(state);
 
-    // 8. Bind and run local listener to 0.0.0.0
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    // 8. Bind and run the listener. Defaults to 0.0.0.0:3000 so the server is
+    //    reachable from other hosts on the LAN / Tailscale tailnet (visit
+    //    http://<tailscale-ip-or-magicdns>:3000), not just localhost. Override
+    //    with MIKU_BIND, e.g. MIKU_BIND=127.0.0.1:3000 to restrict to local.
+    let addr: SocketAddr = env::var("MIKU_BIND")
+        .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
+        .parse()
+        .context("MIKU_BIND must be a valid socket address, e.g. 0.0.0.0:3000")?;
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
@@ -193,12 +282,17 @@ fn app(state: AppState) -> Router {
         .route("/search", get(search))
         .route("/tags", get(tags_index))
         .route("/tags/{tag}", get(tag_filter))
+        .route("/folders/{*path}", get(folder_view))
         .route("/preview", post(preview))
         .route("/p/{*path}", get(page_handler).post(page_save))
         .route("/events", get(events))
         .route("/api/move", post(page_move))
-        .route("/api/trash", post(page_trash))
+        .route("/api/trash", post(page_trash).get(trash_list))
+        .route("/api/trash/restore", post(trash_restore))
+        .route("/api/trash/purge", post(trash_purge))
+        .route("/api/promote-mention", post(promote_mention))
         .route("/api/nav/children", get(nav_children_handler))
+        .route("/api/quickswitch", get(quickswitch))
         .nest_service("/static", ServeDir::new("static"))
         .nest_service("/assets", ServeDir::new("miku/assets"))
         .layer(TraceLayer::new_for_http())
@@ -234,6 +328,14 @@ fn safe_file_path(path: &str) -> Result<PathBuf, AppError> {
     Ok(StdPath::new("miku").join(format!("{path}.md")))
 }
 
+fn validate_folder_path(path: &str) -> Result<String, AppError> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.contains("..") || path.starts_with('/') {
+        return Err(anyhow::anyhow!("Invalid folder path: path traversal detected").into());
+    }
+    Ok(trimmed.to_string())
+}
+
 // Helper to compute SHA-256 hash of content
 fn compute_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
@@ -252,22 +354,109 @@ fn format_modified_time(file_path: &StdPath) -> String {
         .unwrap_or_else(|| "Unknown".to_string())
 }
 
+fn first_plain_mention_range(body: &str, needle: &str) -> Option<(usize, usize)> {
+    if needle.is_empty() {
+        return None;
+    }
+    let needle_len = needle.len();
+
+    // Search the ORIGINAL body so the returned offsets are always valid char
+    // boundaries. We compare with `eq_ignore_ascii_case` (case-insensitive for
+    // ASCII, exact bytes otherwise — correct for caseless scripts like CJK);
+    // this keeps the match the same byte length as the needle, avoiding the
+    // offset drift you'd get from indexing a `to_lowercase()` copy.
+    for (start, _) in body.char_indices() {
+        let end = start + needle_len;
+        if end > body.len() || !body.is_char_boundary(end) {
+            continue;
+        }
+        if !body[start..end].eq_ignore_ascii_case(needle) {
+            continue;
+        }
+        let before = body[..start].chars().rev().take(2).collect::<String>();
+        let after = body[end..].chars().take(2).collect::<String>();
+        let starts_link = before.chars().rev().collect::<String>() == "[[";
+        let ends_link = after == "]]";
+        if !starts_link && !ends_link {
+            return Some((start, end));
+        }
+    }
+
+    None
+}
+
+fn promote_first_plain_mention(raw: &str, mention: &str, target: &str) -> Option<String> {
+    let (frontmatter, body) = parse_frontmatter(raw);
+    let (start, end) = first_plain_mention_range(body, mention)?;
+    let mut promoted_body = String::new();
+    promoted_body.push_str(&body[..start]);
+    promoted_body.push_str("[[");
+    promoted_body.push_str(target);
+    promoted_body.push('|');
+    promoted_body.push_str(&body[start..end]);
+    promoted_body.push_str("]]");
+    promoted_body.push_str(&body[end..]);
+
+    if frontmatter.is_some() {
+        raw.split_once("---\n")
+            .and_then(|(_, rest)| rest.split_once("---\n"))
+            .map(|(yaml, _)| format!("---\n{yaml}---\n{promoted_body}"))
+    } else {
+        Some(promoted_body)
+    }
+}
+
 fn breadcrumb_parent(path: &str) -> Option<String> {
     path.rsplit_once('/')
         .map(|(parent, _)| parent.to_string())
         .filter(|parent| !parent.is_empty())
 }
 
+fn breadcrumb_items(path: &str, title: &str) -> Vec<BreadcrumbItem> {
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    let mut items = Vec::new();
+    let mut current_path = String::new();
+
+    for (index, part) in parts.iter().enumerate() {
+        if !current_path.is_empty() {
+            current_path.push('/');
+        }
+        current_path.push_str(part);
+        let current = index + 1 == parts.len();
+        items.push(BreadcrumbItem {
+            label: if current {
+                title.to_string()
+            } else {
+                (*part).to_string()
+            },
+            path: current_path.clone(),
+            current,
+        });
+    }
+
+    items
+}
+
 // Helper struct for building nav tree (internal use only)
 #[derive(Debug)]
 struct TreeNode {
     title: String,
+    stem: String,
     children: std::collections::BTreeMap<String, TreeNode>,
     is_leaf: bool,
 }
 
-// Convert TreeNode BTreeMap tree into Vec<NavNode> with sorting.
-// Folders come first (sorted alphabetically), then pages (sorted alphabetically).
+fn file_browser_sort_key(stem: &str, is_leaf: bool) -> String {
+    let normalized = stem.to_lowercase();
+    if is_leaf && matches!(normalized.as_str(), "readme" | "index") {
+        format!("!{normalized}")
+    } else {
+        normalized
+    }
+}
+
+// Convert TreeNode BTreeMap tree into Vec<NavNode> with file-browser sorting.
+// Folders come first, then pages; both groups order by path segment/stem.
 fn tree_to_nav_nodes(
     tree: std::collections::BTreeMap<String, TreeNode>,
     prefix: String,
@@ -288,20 +477,25 @@ fn tree_to_nav_nodes(
             pages.push(NavNode {
                 name: node.title.clone(),
                 path: Some(current_path.clone()),
+                stem: node.stem.clone(),
+                sort_key: file_browser_sort_key(&node.stem, true),
                 children,
             });
         } else {
             folders.push(NavNode {
                 name: node.title.clone(),
                 path: None,
+                stem: node.stem.clone(),
+                sort_key: file_browser_sort_key(&node.stem, false),
                 children,
             });
         }
     }
 
-    // Sort: folders first (by name, case-insensitive), then pages (by name, case-insensitive)
-    folders.sort_by_key(|a| a.name.to_lowercase());
-    pages.sort_by_key(|a| a.name.to_lowercase());
+    // Sort like a file browser: folders first, then files, each by path segment
+    // rather than page title. README/index stay near the top of their folder.
+    folders.sort_by_key(|a| a.sort_key.clone());
+    pages.sort_by_key(|a| a.sort_key.clone());
 
     let mut result = folders;
     result.extend(pages);
@@ -336,6 +530,7 @@ fn build_nav_tree(rows: Vec<(String, String)>) -> Vec<NavNode> {
                         } else {
                             part.to_string()
                         },
+                        stem: part.to_string(),
                         children: BTreeMap::new(),
                         is_leaf: is_final,
                     },
@@ -420,12 +615,15 @@ async fn nav_children_handler(
     Query(params): Query<NavChildrenQuery>,
     State(state): State<AppState>,
 ) -> Result<Response, AppError> {
+    let started = Instant::now();
     let dir = params.dir.unwrap_or_default();
+    let db_started = Instant::now();
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT path, title FROM tb_pages ORDER BY title")
             .fetch_all(&state.db)
             .await
             .context("Failed to load nav children")?;
+    let db_ms = timing_ms(db_started);
     let stripped_rows: Vec<(String, String)> = rows
         .into_iter()
         .map(|(path, title)| (path.strip_suffix(".md").unwrap_or(&path).to_string(), title))
@@ -440,8 +638,119 @@ async fn nav_children_handler(
     prune_nav_tree(&mut nodes, "", &dir);
 
     let template = state.templates.get_template("nav_children.html")?;
-    let rendered = template.render(context! { nodes => nodes, prefix => dir })?;
-    Ok(Html(rendered).into_response())
+    let rendered = template.render(context! { nodes => nodes, prefix => dir.clone() })?;
+    let total_ms = timing_ms(started);
+    info!(
+        dir = %dir,
+        db_ms,
+        total_ms,
+        "nav_children rendered"
+    );
+    let mut response = Html(rendered).into_response();
+    attach_server_timing(&mut response, "nav_children", total_ms);
+    Ok(response)
+}
+
+async fn folder_children(
+    db: &sqlx::PgPool,
+    folder_path: &str,
+) -> Result<(Vec<FolderChild>, Vec<FolderPage>), AppError> {
+    let prefix = if folder_path.is_empty() {
+        String::new()
+    } else {
+        format!("{folder_path}/")
+    };
+    let like = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT path, title
+         FROM tb_pages
+         WHERE path LIKE $1 ESCAPE '\\'
+         ORDER BY path",
+    )
+    .bind(&like)
+    .fetch_all(db)
+    .await
+    .context("Failed to load folder children")?;
+
+    let mut folders = std::collections::BTreeMap::<String, String>::new();
+    let mut pages = Vec::new();
+
+    for (raw_path, title) in rows {
+        let page_path = raw_path.strip_suffix(".md").unwrap_or(&raw_path);
+        let Some(rest) = page_path.strip_prefix(&prefix) else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        if let Some((folder, _)) = rest.split_once('/') {
+            folders
+                .entry(folder.to_string())
+                .or_insert_with(|| format!("{prefix}{folder}"));
+        } else {
+            pages.push(FolderPage {
+                title,
+                path: page_path.to_string(),
+            });
+        }
+    }
+
+    pages.sort_by_key(|page| {
+        page.path
+            .rsplit('/')
+            .next()
+            .map(|stem| file_browser_sort_key(stem, true))
+            .unwrap_or_default()
+    });
+    Ok((
+        folders
+            .into_iter()
+            .map(|(name, path)| FolderChild { name, path })
+            .collect(),
+        pages,
+    ))
+}
+
+async fn folder_view(
+    Path(path): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let started = Instant::now();
+    let path = validate_folder_path(&path)?;
+    let template = state.templates.get_template("folder.html")?;
+    let db_started = Instant::now();
+    let nav = nav_pages(&state.db, &path).await?;
+    let (folders, pages) = folder_children(&state.db, &path).await?;
+    let db_ms = timing_ms(db_started);
+    let folder_count = folders.len();
+    let page_count = pages.len();
+    let title = path
+        .rsplit('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("Files")
+        .to_string();
+
+    let rendered = template.render(context! {
+        title => title,
+        path => path,
+        folders => folders,
+        pages => pages,
+        nav_pages => nav,
+        breadcrumbs => breadcrumb_items(&path, &title),
+    })?;
+    let total_ms = timing_ms(started);
+    info!(
+        path = %path,
+        folders = folder_count,
+        pages = page_count,
+        db_ms,
+        total_ms,
+        "folder_view rendered"
+    );
+    let mut response = Html(rendered).into_response();
+    attach_server_timing(&mut response, "folder_view", total_ms);
+    Ok(response)
 }
 
 // Dispatch to view or edit based on the path suffix
@@ -514,21 +823,26 @@ async fn load_slug_map(
 
 // Render the read-only page view
 async fn page_view(path: String, state: AppState) -> Result<Response, AppError> {
+    let started = Instant::now();
     info!("Rendering page view for path: {}", path);
     let file_path = safe_file_path(&path)?;
     let template = state.templates.get_template("page.html")?;
+    let nav_started = Instant::now();
     let nav = nav_pages(&state.db, &path).await?;
+    let nav_ms = timing_ms(nav_started);
 
-    let path_segments: Vec<&str> = path.split('/').collect();
     if !file_path.exists() {
+        let title = format!("Create Page: {path}");
         let rendered = template.render(context! {
-            title => format!("Create Page: {path}"),
+            title => title,
             path => path,
             exists => false,
             content_html => "",
+            body => "",
             loaded_hash => "",
             has_mermaid => false,
             backlinks => Vec::<Backlink>::new(),
+            unlinked_mentions => Vec::<UnlinkedMention>::new(),
             toc => Vec::<Heading>::new(),
             word_count => 0usize,
             backlink_count => 0usize,
@@ -536,13 +850,19 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
             frontmatter => serde_json::Value::Object(serde_json::Map::new()),
             breadcrumb_parent => breadcrumb_parent(&path),
             nav_pages => nav,
-            path_segments => path_segments,
+            breadcrumbs => breadcrumb_items(&path, &title),
         })?;
-        return Ok(Html(rendered).into_response());
+        let total_ms = timing_ms(started);
+        info!(path = %path, exists = false, nav_ms, total_ms, "page_view rendered");
+        let mut response = Html(rendered).into_response();
+        attach_server_timing(&mut response, "page_view", total_ms);
+        return Ok(response);
     }
 
+    let file_started = Instant::now();
     let raw_content = fs::read_to_string(&file_path)
         .context(format!("Failed to read file: {}", file_path.display()))?;
+    let file_ms = timing_ms(file_started);
     let loaded_hash = compute_hash(&raw_content);
     let (frontmatter, body) = parse_frontmatter(&raw_content);
     let title = extract_title(&path, frontmatter.as_ref(), body);
@@ -552,13 +872,16 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
     // Resolve wikilink targets against the index so missing pages render
     // distinctly. The index is a disposable read model; a freshly saved page
     // may briefly resolve as missing until the background indexer catches up.
+    let render_started = Instant::now();
     let slug_map = load_slug_map(&state.db).await?;
     let (content_html, toc) = render_html_with_toc(body, &|norm| slug_map.get(norm).cloned());
+    let markdown_ms = timing_ms(render_started);
 
     // Check has_mermaid
     let has_mermaid = raw_content.contains("```mermaid");
 
     // Load backlinks: pages that link TO this page
+    let backlinks_started = Instant::now();
     let page_id_result: Option<(i64,)> = sqlx::query_as("SELECT id FROM tb_pages WHERE path = $1")
         .bind(format!("{path}.md"))
         .fetch_optional(&state.db)
@@ -589,6 +912,11 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         Vec::new()
     };
     let backlink_count = backlinks.len();
+    let linked_paths: std::collections::HashSet<String> =
+        backlinks.iter().map(|link| link.path.clone()).collect();
+    let unlinked_mentions = unlinked_mentions(&state.db, &path, &title, &linked_paths).await?;
+    let backlinks_ms = timing_ms(backlinks_started);
+    let unlinked_mention_count = unlinked_mentions.len();
     let frontmatter =
         frontmatter.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
@@ -597,9 +925,11 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         path => path,
         exists => true,
         content_html => content_html,
+        body => raw_content,
         loaded_hash => loaded_hash,
         has_mermaid => has_mermaid,
         backlinks => backlinks,
+        unlinked_mentions => unlinked_mentions,
         toc => toc,
         word_count => word_count,
         backlink_count => backlink_count,
@@ -607,10 +937,75 @@ async fn page_view(path: String, state: AppState) -> Result<Response, AppError> 
         frontmatter => frontmatter,
         breadcrumb_parent => breadcrumb_parent(&path),
         nav_pages => nav,
-        path_segments => path_segments,
+        breadcrumbs => breadcrumb_items(&path, &title),
     })?;
 
-    Ok(Html(rendered).into_response())
+    let total_ms = timing_ms(started);
+    info!(
+        path = %path,
+        word_count,
+        backlink_count,
+        unlinked_mentions = unlinked_mention_count,
+        nav_ms,
+        file_ms,
+        markdown_ms,
+        backlinks_ms,
+        total_ms,
+        "page_view rendered"
+    );
+    let mut response = Html(rendered).into_response();
+    attach_server_timing(&mut response, "page_view", total_ms);
+    Ok(response)
+}
+
+async fn unlinked_mentions(
+    db: &sqlx::PgPool,
+    current_path: &str,
+    current_title: &str,
+    linked_paths: &std::collections::HashSet<String>,
+) -> Result<Vec<UnlinkedMention>, AppError> {
+    // Narrow candidates with FTS first (mirrors `search`) so a page view reads
+    // only the handful of pages that actually mention the title — never the
+    // whole vault from disk on every render.
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT path, title
+         FROM tb_pages
+         WHERE body_tsv @@ websearch_to_tsquery('english', $1)
+         ORDER BY ts_rank(body_tsv, websearch_to_tsquery('english', $1)) DESC
+         LIMIT 100",
+    )
+    .bind(current_title)
+    .fetch_all(db)
+    .await
+    .context("Failed to load pages for unlinked mentions")?;
+
+    let mut mentions = Vec::new();
+    for (path, title) in rows {
+        let display_path = path.strip_suffix(".md").unwrap_or(&path).to_string();
+        if display_path == current_path || linked_paths.contains(&display_path) {
+            continue;
+        }
+        let Some(raw) = safe_file_path(&display_path)
+            .ok()
+            .and_then(|file_path| fs::read_to_string(file_path).ok())
+        else {
+            continue;
+        };
+        let (_, body) = parse_frontmatter(&raw);
+        if first_plain_mention_range(body, current_title).is_none() {
+            continue;
+        }
+        mentions.push(UnlinkedMention {
+            path: display_path,
+            title,
+            snippet: search_snippet(body, current_title),
+        });
+        if mentions.len() >= 20 {
+            break;
+        }
+    }
+
+    Ok(mentions)
 }
 
 // Render the edit page
@@ -735,18 +1130,29 @@ struct MoveForm {
     to: String,
 }
 
-// Handle moving/renaming a page
-async fn page_move(Form(form): Form<MoveForm>) -> Result<Response, AppError> {
+// Handle moving/renaming a page. Serves both rename (context menu) and
+// move-into-folder (drag): the client always sends the full destination path.
+// Returns JSON so the tree controller can react without a full-page navigation;
+// expected outcomes (collision, missing source) use explicit status codes.
+async fn page_move(Json(form): Json<MoveForm>) -> Result<Response, AppError> {
     info!("Moving page from: {} to: {}", form.from, form.to);
     let src = safe_file_path(&form.from)?;
     let dst = safe_file_path(&form.to)?;
 
     if !src.exists() {
-        return Err(anyhow::anyhow!("Source page not found: {}", form.from).into());
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "missing", "from": form.from })),
+        )
+            .into_response());
     }
 
     if dst.exists() {
-        return Ok((StatusCode::CONFLICT, "Target page already exists").into_response());
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "exists", "target": form.to })),
+        )
+            .into_response());
     }
 
     if let Some(parent) = dst.parent() {
@@ -763,7 +1169,7 @@ async fn page_move(Form(form): Form<MoveForm>) -> Result<Response, AppError> {
     ))?;
 
     info!("Moved page from {} to {} successfully", form.from, form.to);
-    Ok(Redirect::to(&format!("/p/{}", form.to)).into_response())
+    Ok(Json(serde_json::json!({ "ok": true, "path": form.to })).into_response())
 }
 
 #[derive(serde::Deserialize)]
@@ -771,69 +1177,385 @@ struct TrashForm {
     path: String,
 }
 
-// Handle trashing a page
-async fn page_trash(Form(form): Form<TrashForm>) -> Result<Response, AppError> {
+#[derive(serde::Deserialize)]
+struct TrashIdForm {
+    id: String,
+}
+
+// Sidecar manifest written next to each trashed `.md` (as `<id>.json`) so a
+// soft-deleted page can be restored to its original location. Lives under
+// `miku/.trash`, which the indexer skips via `is_hidden_rel`, so manifests
+// never enter the index.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TrashManifest {
+    id: String,
+    original_path: String,
+    title: String,
+    trashed_at: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct PromoteMentionForm {
+    source_path: String,
+    target_path: String,
+    mention: String,
+    return_to: String,
+}
+
+fn trash_dir() -> PathBuf {
+    StdPath::new("miku").join(".trash")
+}
+
+// A trash id is a bare filename stem we join onto `miku/.trash`; reject anything
+// that could escape that directory.
+fn safe_trash_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err(anyhow::anyhow!("Invalid trash id").into());
+    }
+    Ok(())
+}
+
+// Handle trashing a page: move it into `miku/.trash/<id>.md` and write a sidecar
+// `<id>.json` manifest recording its original path so it can be restored. Returns
+// JSON (no redirect) so the UI can offer an Undo without navigating away.
+async fn page_trash(Json(form): Json<TrashForm>) -> Result<Response, AppError> {
     info!("Trashing page: {}", form.path);
     let src = safe_file_path(&form.path)?;
 
     if !src.exists() {
-        return Err(anyhow::anyhow!("Page not found: {}", form.path).into());
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "missing", "path": form.path })),
+        )
+            .into_response());
     }
 
-    let trash_dir = StdPath::new("miku").join(".trash");
-    fs::create_dir_all(&trash_dir).context(format!(
+    let dir = trash_dir();
+    fs::create_dir_all(&dir).context(format!(
         "Failed to create trash directory: {}",
-        trash_dir.display()
+        dir.display()
     ))?;
+
+    let raw = fs::read_to_string(&src)
+        .context(format!("Failed to read page for trash: {}", src.display()))?;
+    let (frontmatter, body) = parse_frontmatter(&raw);
+    let title = extract_title(&form.path, frontmatter.as_ref(), body);
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .context("Failed to get current time")?
         .as_secs();
     let flattened = form.path.replace('/', "-");
-    let trash_filename = format!("{flattened}-{ts}.md");
-    let trash_dst = trash_dir.join(&trash_filename);
 
-    fs::rename(&src, &trash_dst).context(format!(
+    // Collision-proof id: append a counter if the base id is already taken.
+    let base = format!("{flattened}-{ts}");
+    let mut id = base.clone();
+    let mut n = 1;
+    while dir.join(format!("{id}.md")).exists() {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+
+    let trash_md = dir.join(format!("{id}.md"));
+    fs::rename(&src, &trash_md).context(format!(
         "Failed to move file to trash: {}",
-        trash_dst.display()
+        trash_md.display()
     ))?;
 
-    info!("Trashed page {} to {}", form.path, trash_filename);
-    Ok(Redirect::to("/p/Index").into_response())
+    let manifest = TrashManifest {
+        id: id.clone(),
+        original_path: form.path.clone(),
+        title,
+        trashed_at: ts,
+    };
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).context("Failed to serialize trash manifest")?;
+    fs::write(dir.join(format!("{id}.json")), manifest_json)
+        .context("Failed to write trash manifest")?;
+
+    info!("Trashed page {} as {}", form.path, id);
+    Ok(
+        Json(serde_json::json!({ "ok": true, "id": id, "original_path": form.path }))
+            .into_response(),
+    )
+}
+
+// List trashed pages (newest first) for the sidebar Trash view.
+async fn trash_list() -> Result<Response, AppError> {
+    let dir = trash_dir();
+    let mut items: Vec<TrashManifest> = Vec::new();
+    if dir.exists() {
+        for entry in fs::read_dir(&dir).context("Failed to read trash directory")? {
+            let path = entry.context("Failed to read trash entry")?.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                if let Ok(raw) = fs::read_to_string(&path) {
+                    if let Ok(manifest) = serde_json::from_str::<TrashManifest>(&raw) {
+                        items.push(manifest);
+                    }
+                }
+            }
+        }
+    }
+    items.sort_by_key(|item| std::cmp::Reverse(item.trashed_at));
+    Ok(Json(items).into_response())
+}
+
+// Restore a trashed page to its original path (409 if a live file now occupies it).
+async fn trash_restore(Json(form): Json<TrashIdForm>) -> Result<Response, AppError> {
+    safe_trash_id(&form.id)?;
+    let dir = trash_dir();
+    let manifest_path = dir.join(format!("{}.json", form.id));
+    let trash_md = dir.join(format!("{}.md", form.id));
+
+    if !manifest_path.exists() {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "missing", "id": form.id })),
+        )
+            .into_response());
+    }
+
+    let raw = fs::read_to_string(&manifest_path).context("Failed to read trash manifest")?;
+    let manifest: TrashManifest =
+        serde_json::from_str(&raw).context("Failed to parse trash manifest")?;
+
+    let dst = safe_file_path(&manifest.original_path)?;
+    if dst.exists() {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "exists", "target": manifest.original_path })),
+        )
+            .into_response());
+    }
+
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).context("Failed to create parent directories for restore")?;
+    }
+    fs::rename(&trash_md, &dst).context("Failed to restore page from trash")?;
+    fs::remove_file(&manifest_path).context("Failed to remove trash manifest after restore")?;
+
+    info!("Restored {} from trash", manifest.original_path);
+    Ok(Json(serde_json::json!({ "ok": true, "path": manifest.original_path })).into_response())
+}
+
+// Permanently delete a trashed page and its manifest.
+async fn trash_purge(Json(form): Json<TrashIdForm>) -> Result<Response, AppError> {
+    safe_trash_id(&form.id)?;
+    let dir = trash_dir();
+    for ext in ["md", "json"] {
+        let path = dir.join(format!("{}.{ext}", form.id));
+        if path.exists() {
+            fs::remove_file(&path)
+                .context(format!("Failed to purge trash file: {}", path.display()))?;
+        }
+    }
+    info!("Purged trash item {}", form.id);
+    Ok(Json(serde_json::json!({ "ok": true })).into_response())
+}
+
+async fn promote_mention(Form(form): Form<PromoteMentionForm>) -> Result<Response, AppError> {
+    let source = safe_file_path(&form.source_path)?;
+    let raw = fs::read_to_string(&source).context(format!(
+        "Failed to read source page for mention promotion: {}",
+        source.display()
+    ))?;
+    let Some(promoted) = promote_first_plain_mention(&raw, &form.mention, &form.target_path) else {
+        return Ok(Redirect::to(&format!("/p/{}", form.return_to)).into_response());
+    };
+
+    let temp_path = source.with_extension("tmp");
+    {
+        let mut file = fs::File::create(&temp_path).context(format!(
+            "Failed to create temp file: {}",
+            temp_path.display()
+        ))?;
+        file.write_all(promoted.as_bytes())
+            .context("Failed to write promoted mention to temp file")?;
+        file.sync_all()
+            .context("Failed to sync promoted mention temp file")?;
+    }
+
+    fs::rename(&temp_path, &source).context(format!(
+        "Failed to replace source page after mention promotion: {}",
+        source.display()
+    ))?;
+
+    Ok(Redirect::to(&format!("/p/{}", form.return_to)).into_response())
 }
 
 // Search handler: full-text search over pages
 #[derive(serde::Deserialize)]
 struct SearchParams {
     q: Option<String>,
+    scope: Option<String>,
+}
+
+async fn quickswitch(
+    Query(params): Query<SearchParams>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let started = Instant::now();
+    let query = params.q.as_deref().unwrap_or("").trim();
+    let rows: Vec<(String, String)> = if query.is_empty() {
+        sqlx::query_as("SELECT path, title FROM tb_pages ORDER BY title LIMIT 20")
+            .fetch_all(&state.db)
+            .await
+            .context("Failed to load quickswitch pages")?
+    } else {
+        let escaped = escape_like(query);
+        let like = format!("%{escaped}%");
+        sqlx::query_as(
+            "SELECT path, title
+             FROM tb_pages
+             WHERE title ILIKE $1 ESCAPE '\\' OR path ILIKE $1 ESCAPE '\\'
+             ORDER BY
+               CASE
+                 WHEN title ILIKE $2 ESCAPE '\\' THEN 0
+                 WHEN path ILIKE $2 ESCAPE '\\' THEN 1
+                 ELSE 2
+               END,
+               title
+             LIMIT 20",
+        )
+        .bind(&like)
+        .bind(format!("{escaped}%"))
+        .fetch_all(&state.db)
+        .await
+        .context("Failed to execute quickswitch search")?
+    };
+
+    let result_count = rows.len();
+    let total_ms = timing_ms(started);
+    info!(query, result_count, total_ms, "quickswitch searched");
+    let mut response = Json(
+        rows.into_iter()
+            .map(|(path, title)| QuickSwitchResult {
+                path: path.strip_suffix(".md").unwrap_or(&path).to_string(),
+                title,
+            })
+            .collect::<Vec<_>>(),
+    )
+    .into_response();
+    attach_server_timing(&mut response, "quickswitch", total_ms);
+    Ok(response)
+}
+
+async fn search_rows(
+    db: &sqlx::PgPool,
+    query: &str,
+    scope: SearchScope,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let escaped = escape_like(query);
+    let like = format!("%{escaped}%");
+    let prefix = format!("{escaped}%");
+
+    match scope {
+        SearchScope::Title => {
+            sqlx::query_as(
+                "SELECT path, title
+                 FROM tb_pages
+                 WHERE title ILIKE $1 ESCAPE '\\'
+                    OR path ILIKE $1 ESCAPE '\\'
+                    OR slug ILIKE $1 ESCAPE '\\'
+                 ORDER BY
+                   CASE
+                     WHEN title ILIKE $2 ESCAPE '\\' THEN 0
+                     WHEN path ILIKE $2 ESCAPE '\\' THEN 1
+                     WHEN slug ILIKE $2 ESCAPE '\\' THEN 2
+                     ELSE 3
+                   END,
+                   title
+                 LIMIT 50",
+            )
+            .bind(&like)
+            .bind(&prefix)
+            .fetch_all(db)
+            .await
+        }
+        SearchScope::Body => {
+            sqlx::query_as(
+                "WITH query AS (
+                   SELECT websearch_to_tsquery('english', $1) AS tsq
+                 ),
+                 candidates AS MATERIALIZED (
+                   SELECT p.path, p.title, p.body_tsv
+                   FROM tb_pages p, query
+                   WHERE p.body_tsv @@ query.tsq
+                   LIMIT 250
+                 )
+                 SELECT candidates.path, candidates.title
+                 FROM candidates, query
+                 ORDER BY ts_rank(candidates.body_tsv, query.tsq) DESC, candidates.title
+                 LIMIT 50",
+            )
+            .bind(query)
+            .fetch_all(db)
+            .await
+        }
+        SearchScope::All => {
+            sqlx::query_as(
+                "WITH query AS (
+                   SELECT websearch_to_tsquery('english', $1) AS tsq
+                 ),
+                 body_candidates AS MATERIALIZED (
+                   SELECT p.path, p.title, p.body_tsv
+                   FROM tb_pages p, query
+                   WHERE p.body_tsv @@ query.tsq
+                   LIMIT 250
+                 ),
+                 matched AS (
+                   SELECT path, title,
+                     CASE
+                       WHEN title ILIKE $3 ESCAPE '\\' THEN 100.0
+                       WHEN path ILIKE $3 ESCAPE '\\' THEN 90.0
+                       WHEN slug ILIKE $3 ESCAPE '\\' THEN 80.0
+                       ELSE 60.0
+                     END AS score
+                   FROM tb_pages
+                   WHERE title ILIKE $2 ESCAPE '\\'
+                      OR path ILIKE $2 ESCAPE '\\'
+                      OR slug ILIKE $2 ESCAPE '\\'
+                   UNION ALL
+                   SELECT body_candidates.path, body_candidates.title, ts_rank(body_candidates.body_tsv, query.tsq) * 40.0 AS score
+                   FROM body_candidates, query
+                 )
+                 SELECT path, title
+                 FROM matched
+                 GROUP BY path, title
+                 ORDER BY MAX(score) DESC, title
+                 LIMIT 50",
+            )
+            .bind(query)
+            .bind(&like)
+            .bind(&prefix)
+            .fetch_all(db)
+            .await
+        }
+    }
 }
 
 async fn search(
     Query(params): Query<SearchParams>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    info!("Rendering search");
+    let started = Instant::now();
     let template = state.templates.get_template("search.html")?;
 
     let query_str = params.q.as_deref().unwrap_or("").trim().to_string();
+    let scope = SearchScope::from_param(params.scope.as_deref());
 
     let results = if query_str.is_empty() {
         Vec::new()
     } else {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT path, title
-             FROM tb_pages
-             WHERE body_tsv @@ websearch_to_tsquery('english', $1)
-             ORDER BY ts_rank(body_tsv, websearch_to_tsquery('english', $1)) DESC
-             LIMIT 50",
-        )
-        .bind(&query_str)
-        .fetch_all(&state.db)
-        .await
-        .context("Failed to execute full-text search")?;
+        let db_started = Instant::now();
+        let rows = search_rows(&state.db, &query_str, scope)
+            .await
+            .context("Failed to execute search")?;
+        let db_ms = timing_ms(db_started);
 
-        rows.into_iter()
+        let snippet_started = Instant::now();
+        let results = rows
+            .into_iter()
             .map(|(path, title)| {
                 let display_path = path.strip_suffix(".md").unwrap_or(&path).to_string();
                 // The index stores only body_tsv, not the raw body, so build the
@@ -853,18 +1575,33 @@ async fn search(
                     snippet,
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let snippet_ms = timing_ms(snippet_started);
+        info!(
+            query = %query_str,
+            scope = scope.as_str(),
+            result_count = results.len(),
+            db_ms,
+            snippet_ms,
+            "search queried"
+        );
+        results
     };
 
     let nav = nav_pages(&state.db, "").await?;
     let rendered = template.render(context! {
         query => query_str,
+        scope => scope.as_str(),
         results => results,
         nav_pages => nav,
         section => "search",
     })?;
 
-    Ok(Html(rendered).into_response())
+    let total_ms = timing_ms(started);
+    info!(scope = scope.as_str(), total_ms, "search rendered");
+    let mut response = Html(rendered).into_response();
+    attach_server_timing(&mut response, "search", total_ms);
+    Ok(response)
 }
 
 // Tags index handler: list all tags with their counts
@@ -935,6 +1672,10 @@ async fn tag_filter(
 mod tests {
     use super::*;
 
+    fn test_breadcrumbs() -> Vec<BreadcrumbItem> {
+        breadcrumb_items("Notes/Daily", "Daily")
+    }
+
     #[test]
     fn test_template_rendering() {
         let mut templates_env = Environment::new();
@@ -949,21 +1690,91 @@ mod tests {
                 path => "TestPath",
                 exists => true,
                 content_html => "<p>Test content</p>",
+                body => "# Test Title\n\nTest content",
                 loaded_hash => "abc",
                 has_mermaid => false,
                 backlinks => Vec::<Backlink>::new(),
+                unlinked_mentions => Vec::<UnlinkedMention>::new(),
                 toc => Vec::<Heading>::new(),
                 word_count => 2usize,
                 backlink_count => 0usize,
                 updated => "2026-06-27 12:00",
                 frontmatter => serde_json::Value::Object(serde_json::Map::new()),
                 breadcrumb_parent => Option::<String>::None,
+                breadcrumbs => test_breadcrumbs(),
             })
             .expect("Failed to render template");
 
         assert!(rendered.contains("Test Title"));
         assert!(rendered.contains("miku"));
+        assert!(rendered.contains("data-inline-editor"));
+        assert!(rendered.contains("data-inline-body"));
+        assert!(rendered.contains("@codemirror/autocomplete"));
+        assert!(rendered.contains("/api/quickswitch?q="));
+        assert!(rendered.contains("class=\"mk-breadcrumb-link\""));
+        assert!(rendered.contains("href=\"/folders/Notes\""));
+        assert!(rendered.contains("href=\"/p/Notes&#x2f;Daily\""));
         assert!(!rendered.contains("mermaid.min.js"));
+    }
+
+    #[test]
+    fn test_folder_template_renders_folder_browser() {
+        let mut templates_env = Environment::new();
+        templates_env.set_loader(minijinja::path_loader("src/templates"));
+
+        let template = templates_env
+            .get_template("folder.html")
+            .expect("Failed to get folder.html template");
+        let rendered = template
+            .render(context! {
+                title => "Notes",
+                path => "Notes",
+                folders => vec![FolderChild {
+                    name: "Daily".to_string(),
+                    path: "Notes/Daily".to_string(),
+                }],
+                pages => vec![FolderPage {
+                    title: "Overview".to_string(),
+                    path: "Notes/Overview".to_string(),
+                }],
+                nav_pages => Vec::<NavNode>::new(),
+                breadcrumbs => breadcrumb_items("Notes", "Notes"),
+            })
+            .expect("Failed to render folder.html template");
+
+        assert!(rendered.contains("FOLDER"));
+        assert!(rendered.contains("href=\"/folders/Notes&#x2f;Daily\""));
+        assert!(rendered.contains("href=\"/p/Notes&#x2f;Overview\""));
+        assert!(rendered.contains("Create note here"));
+    }
+
+    #[test]
+    fn test_quickswitch_clears_loading_state_defensively() {
+        let base = std::fs::read_to_string("src/templates/base.html")
+            .expect("Failed to read base.html template");
+
+        assert!(base.contains("queuePaletteRefresh()"));
+        assert!(base.contains("paletteRequestId"));
+        assert!(base.contains("AbortController"));
+        assert!(base.contains("this.paletteLoading = false"));
+        assert!(!base.contains("@input=\"refreshPalette()\""));
+        assert!(!base.contains("x-model.debounce.120ms=\"paletteQuery\""));
+    }
+
+    #[test]
+    fn test_shell_has_resizable_panes_without_repeated_page_marks() {
+        let base = std::fs::read_to_string("src/templates/base.html")
+            .expect("Failed to read base.html template");
+        let page =
+            std::fs::read_to_string("src/templates/page.html").expect("Failed to read page.html");
+        let css = std::fs::read_to_string("static/miku.css").expect("Failed to read miku.css");
+
+        assert!(base.contains("mk-sidebar-resizer"));
+        assert!(page.contains("mk-rail-resizer"));
+        assert!(base.contains("miku:sidebar-width"));
+        assert!(base.contains("miku:rail-width"));
+        assert!(css.contains("grid-template-columns: minmax(0, 1fr) 8px var(--rail-w)"));
+        assert!(!page.contains("mk-page-mark"));
     }
 
     #[test]
@@ -980,15 +1791,18 @@ mod tests {
                 path => "TestPath",
                 exists => true,
                 content_html => "<p>Test content</p>",
+                body => "# Test Title\n\nTest content",
                 loaded_hash => "abc",
                 has_mermaid => true,
                 backlinks => Vec::<Backlink>::new(),
+                unlinked_mentions => Vec::<UnlinkedMention>::new(),
                 toc => Vec::<Heading>::new(),
                 word_count => 2usize,
                 backlink_count => 0usize,
                 updated => "2026-06-27 12:00",
                 frontmatter => serde_json::Value::Object(serde_json::Map::new()),
                 breadcrumb_parent => Option::<String>::None,
+                breadcrumbs => test_breadcrumbs(),
             })
             .expect("Failed to render template");
 
@@ -1013,15 +1827,18 @@ mod tests {
                 path => "Notes/Daily",
                 exists => true,
                 content_html => "<p>Test</p>",
+                body => "# Test Title\n\nTest",
                 loaded_hash => "abc",
                 has_mermaid => false,
                 backlinks => Vec::<Backlink>::new(),
+                unlinked_mentions => Vec::<UnlinkedMention>::new(),
                 toc => Vec::<Heading>::new(),
                 word_count => 1usize,
                 backlink_count => 0usize,
                 updated => "2026-06-27 12:00",
                 frontmatter => frontmatter,
                 breadcrumb_parent => Option::<String>::None,
+                breadcrumbs => test_breadcrumbs(),
             })
             .expect("Failed to render template");
 
@@ -1056,15 +1873,18 @@ mod tests {
                 path => "Notes/Daily",
                 exists => true,
                 content_html => "<p>Test</p>",
+                body => "# Test Title\n\nTest",
                 loaded_hash => "abc",
                 has_mermaid => false,
                 backlinks => Vec::<Backlink>::new(),
+                unlinked_mentions => Vec::<UnlinkedMention>::new(),
                 toc => toc_headings,
                 word_count => 10usize,
                 backlink_count => 1usize,
                 updated => "2026-06-27 12:00",
                 frontmatter => frontmatter,
                 breadcrumb_parent => Option::<String>::None,
+                breadcrumbs => test_breadcrumbs(),
             })
             .expect("Failed to render template");
 
@@ -1218,6 +2038,30 @@ mod tests {
     }
 
     #[test]
+    fn test_build_nav_tree_sorts_pages_by_file_stem_not_title() {
+        let rows = vec![
+            ("docs/02-setup".to_string(), "Apple Title".to_string()),
+            ("docs/README".to_string(), "Folder Overview".to_string()),
+            ("docs/01-intro".to_string(), "Zebra Title".to_string()),
+        ];
+        let result = build_nav_tree(rows);
+        let docs = &result[0];
+        let names: Vec<&str> = docs
+            .children
+            .iter()
+            .map(|node| node.name.as_str())
+            .collect();
+        let stems: Vec<&str> = docs
+            .children
+            .iter()
+            .map(|node| node.stem.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["Folder Overview", "Zebra Title", "Apple Title"]);
+        assert_eq!(stems, vec!["README", "01-intro", "02-setup"]);
+    }
+
+    #[test]
     fn test_build_nav_tree_empty() {
         let rows = vec![];
         let result = build_nav_tree(rows);
@@ -1327,6 +2171,40 @@ mod tests {
         assert!(tx.send("Orphan".to_string()).is_err());
     }
 
+    #[test]
+    fn test_promote_first_plain_mention_preserves_label() {
+        let promoted = promote_first_plain_mention(
+            "# Source\n\nThis references Target Page in prose.",
+            "Target Page",
+            "Notes/Target",
+        )
+        .expect("mention promoted");
+
+        assert!(promoted.contains("[[Notes/Target|Target Page]]"));
+    }
+
+    #[test]
+    fn test_promote_first_plain_mention_case_insensitive_after_multibyte() {
+        // A multi-byte (CJK) prefix must not corrupt the byte offsets, and the
+        // match is case-insensitive while preserving the original-cased label.
+        let promoted = promote_first_plain_mention(
+            "日本語 about target page in prose.",
+            "Target Page",
+            "Notes/Target",
+        )
+        .expect("mention promoted");
+
+        assert!(promoted.contains("[[Notes/Target|target page]]"));
+    }
+
+    #[test]
+    fn test_promote_first_plain_mention_skips_existing_wikilink() {
+        let promoted =
+            promote_first_plain_mention("Already [[Target Page]] here.", "Target Page", "Target");
+
+        assert!(promoted.is_none());
+    }
+
     #[tokio::test]
     async fn test_app_router_registers_events_route() {
         // Build the router with a dummy AppState (no DB connection is made until
@@ -1358,15 +2236,18 @@ mod tests {
                 path => "Notes/Daily",
                 exists => true,
                 content_html => "<p>Test content</p>",
+                body => "# Test Title\n\nTest content",
                 loaded_hash => "abc",
                 has_mermaid => false,
                 backlinks => Vec::<Backlink>::new(),
+                unlinked_mentions => Vec::<UnlinkedMention>::new(),
                 toc => Vec::<Heading>::new(),
                 word_count => 2usize,
                 backlink_count => 0usize,
                 updated => "2026-06-27 12:00",
                 frontmatter => serde_json::Value::Object(serde_json::Map::new()),
                 breadcrumb_parent => Option::<String>::None,
+                breadcrumbs => test_breadcrumbs(),
             })
             .expect("Failed to render template");
 
@@ -1390,5 +2271,36 @@ mod tests {
     fn test_safe_file_path_rejects_absolute() {
         let result = safe_file_path("/abs");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_trash_id_accepts_generated_id() {
+        // Ids are `<flattened-path>-<ts>` (with an optional `-<n>` suffix).
+        assert!(safe_trash_id("Notes-Daily-1719800000").is_ok());
+        assert!(safe_trash_id("Index-1719800000-2").is_ok());
+    }
+
+    #[test]
+    fn test_safe_trash_id_rejects_traversal_and_separators() {
+        assert!(safe_trash_id("").is_err());
+        assert!(safe_trash_id("../secret").is_err());
+        assert!(safe_trash_id("nested/id").is_err());
+        assert!(safe_trash_id("back\\slash").is_err());
+    }
+
+    #[test]
+    fn test_trash_manifest_round_trips() {
+        let manifest = TrashManifest {
+            id: "Notes-Daily-1719800000".to_string(),
+            original_path: "Notes/Daily".to_string(),
+            title: "Daily".to_string(),
+            trashed_at: 1_719_800_000,
+        };
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        let back: TrashManifest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id, manifest.id);
+        assert_eq!(back.original_path, "Notes/Daily");
+        assert_eq!(back.title, "Daily");
+        assert_eq!(back.trashed_at, 1_719_800_000);
     }
 }

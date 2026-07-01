@@ -10,32 +10,44 @@ Miku - Search
     
     {% if query %}
     <p class="text-xs text-muted mb-8 font-semibold uppercase tracking-wider">
-        Found <strong class="text-teal font-extrabold">{{ results | length }}</strong> results for <span class="text-text-base">"{{ query }}"</span>
+        Showing <strong class="text-teal font-extrabold">{{ results | length }}</strong> {{ scope | default('all') }} results for <span class="text-text-base">"{{ query }}"</span>
     </p>
     {% else %}
     <p class="text-sm text-muted/80 mb-8 font-medium">Search instantly across all your notes, titles, and tags.</p>
     {% endif %}
 
-    <form method="get" action="/search" class="flex gap-3 mb-10 max-w-xl">
-        <div class="relative flex-1">
-            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-muted/60 text-lg" aria-hidden="true">⌕</span>
-            <input 
-                type="search" 
-                name="q" 
-                value="{{ query | default('') }}" 
-                placeholder="Search notes..." 
-                class="w-full bg-panel/30 border border-border/25 rounded-xl pl-10 pr-4 py-2.75 text-sm font-semibold text-text-base placeholder:text-muted/40 focus:outline-none focus:border-teal/50 transition" 
-                autofocus
-            >
+    <form method="get" action="/search" class="mb-10 max-w-xl"
+          hx-boost="true" hx-target=".mk-view" hx-select=".mk-view"
+          hx-swap="outerHTML show:top" hx-push-url="true">
+        <div class="flex gap-3">
+            <div class="relative flex-1">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-muted/60 text-lg" aria-hidden="true">⌕</span>
+                <input 
+                    type="search" 
+                    name="q" 
+                    value="{{ query | default('') }}" 
+                    placeholder="Search notes..." 
+                    class="w-full bg-panel/30 border border-border/25 rounded-xl pl-10 pr-4 py-2.75 text-sm font-semibold text-text-base placeholder:text-muted/40 focus:outline-none focus:border-teal/50 transition" 
+                    autofocus
+                >
+            </div>
+            <button type="submit" class="mk-btn mk-btn-primary px-6">Search</button>
         </div>
-        <button type="submit" class="mk-btn mk-btn-primary px-6">Search</button>
+        <div class="mk-scope mt-3" aria-label="Search scope">
+            <button type="submit" name="scope" value="all" class="mk-chip {% if scope | default('all') == 'all' %}is-active{% endif %}">All</button>
+            <button type="submit" name="scope" value="title" class="mk-chip {% if scope | default('all') == 'title' %}is-active{% endif %}">Title</button>
+            <button type="submit" name="scope" value="body" class="mk-chip {% if scope | default('all') == 'body' %}is-active{% endif %}">Body</button>
+        </div>
     </form>
 
     {% if query %}
         {% if results %}
             <div class="flex flex-col gap-4">
                 {% for r in results %}
-                <a href="/p/{{ r.path }}" class="group block p-5 rounded-2xl border border-border/15 bg-panel/10 hover:bg-panel/20 hover:border-teal/30 hover:shadow-[0_8px_24px_-10px_var(--tealglow)] transition-all duration-200 no-underline">
+                <a href="/p/{{ r.path }}"
+                   hx-boost="true" hx-target=".mk-view" hx-select=".mk-view"
+                   hx-swap="outerHTML show:top" hx-push-url="true"
+                   class="group block p-5 rounded-2xl border border-border/15 bg-panel/10 hover:bg-panel/20 hover:border-teal/30 hover:shadow-[0_8px_24px_-10px_var(--tealglow)] transition-all duration-200 no-underline">
                     <div class="flex flex-wrap items-center gap-2 mb-2">
                         <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal/10 text-teal border border-teal/20" aria-hidden="true">NOTE</span>
                         <span class="font-display font-bold text-base text-text-base group-hover:text-teal transition-colors">{{ r.title }}</span>
