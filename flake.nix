@@ -25,6 +25,10 @@
             oha
             # formatting
             prettier
+            # local Postgres for the native (no-container) dev stack — see
+            # `make db-up` / `make dev`. The index is disposable; runs against a
+            # project-local cluster under .pgdata (gitignored).
+            postgresql_18
           ];
         };
       });
